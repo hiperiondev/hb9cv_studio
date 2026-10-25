@@ -88,7 +88,7 @@ It comes in two parts:
 |---|---|---|
 | Python | 3.9 or newer with Tk and venv (distribution packages) | 3.9 or newer from python.org (includes Tk) |
 | Python packages | `customtkinter`, `matplotlib`, `numpy` (installed in a virtual environment) | same |
-| nec2c | distribution package `nec2c`, or compiled from source | compiled from source with MSYS2, or an existing `nec2c.exe` |
+| nec2c | distribution package `nec2c`, or compiled from source | `nec2c.exe` included in the project (installed automatically) |
 
 nec2c is needed for simulation, optimization and the pattern plots. Without it you can still write models and design
 matching networks from typed impedances. The engine `hb9cv.py` only uses the Python standard library; the three
@@ -170,9 +170,10 @@ it is found automatically.
    - looks for Python 3.9+ with Tk. If there is none, it offers to install Python 3.12 with `winget`;
    - copies the program to `%LOCALAPPDATA%\Programs\HB9CV-Studio`;
    - creates a virtual environment there with `customtkinter`, `matplotlib` and `numpy`;
-   - provides `nec2c.exe` in its `bin` folder. If nec2c is not in the `PATH`, the installer offers to install
-     [MSYS2](https://www.msys2.org/) with `winget` (about 500 MB). It then compiles nec2c from source and copies
-     `nec2c.exe` with its runtime DLLs. The first MSYS2 run takes several minutes;
+   - installs the `nec2c.exe` included in the project folder, together with any runtime DLLs next to it, into
+     its `bin` folder, and checks that it runs. Only when the project has no working `nec2c.exe` (and none is
+     in the `PATH`) does it offer to compile one: it installs [MSYS2](https://www.msys2.org/) with `winget`
+     (about 500 MB, several minutes the first time);
    - creates **HB9CV Studio** shortcuts in the Start menu and on the desktop. The Start menu folder also links to
      the three manuals and to the uninstaller.
 
@@ -182,7 +183,7 @@ PowerShell options, for example
 | Option | Effect |
 |---|---|
 | `-InstallDir DIR` | install somewhere else |
-| `-Nec2c C:\path\nec2c.exe` | use an existing nec2c.exe (MSYS2/Cygwin DLLs next to it are copied too) |
+| `-Nec2c C:\path\nec2c.exe` | install this nec2c.exe instead of the one in the project (its runtime DLLs are copied too) |
 | `-SkipNec2c` | do not look for or compile nec2c |
 | `-AddToPath` | add the program folder to your `PATH`, so `hb9cv` and `hb9cv-studio` work in any terminal |
 | `-NoShortcuts` | no Start menu or desktop shortcuts |
@@ -205,11 +206,10 @@ hb9cv --mode generate --run -o first.nec
 
 1. Install Python 3 from <https://www.python.org/downloads/>. Tick **Add python.exe to PATH** and keep
    **tcl/tk and IDLE** selected.
-2. Get `nec2c.exe`:
-   - install MSYS2;
-   - in the *MSYS2 MSYS* terminal, go to the project folder and run
-     `pacman -S --needed gcc tar curl git` and then `bash tools/build_nec2c.sh bin`;
-   - this puts `nec2c.exe` and its DLLs in `bin\`, where the program finds them.
+2. Nothing to do for nec2c: the `nec2c.exe` in the project folder is found automatically. To use a different one,
+   write its path in the **nec2c** field of the window. To rebuild it from source, install MSYS2; then, in the
+   *MSYS2 MSYS* terminal in the project folder, run `pacman -S --needed gcc tar curl git` and
+   `bash tools/build_nec2c.sh bin`.
 3. In a terminal opened in the project folder:
 
 ```bat
@@ -227,7 +227,8 @@ py -m venv .venv
 1. the `nec2c` field of the GUI, or `--nec2c PATH` (a file, or a folder containing `nec2c` / `nec2c.exe`);
 2. the `HB9CV_NEC2C` environment variable;
 3. the `PATH`;
-4. the `bin` folder next to `hb9cv.py` (where the installers and `tools/build_nec2c.sh` put it).
+4. the `bin` folder next to `hb9cv.py` (where the installers and `tools/build_nec2c.sh` put it);
+5. on Windows, the `nec2c.exe` in the project folder itself.
 
 Keep `hb9cv.py` and `hb9cv_gui.py` in the same folder.
 
@@ -364,6 +365,8 @@ hb9cv.py                  engine (CLI): generate / optimize / match / sweep
 hb9cv_gui.py              HB9CV Studio graphical interface
 requirements.txt          Python packages (customtkinter, matplotlib, numpy)
 install.sh, uninstall.sh  Linux installer / uninstaller (Fedora, Debian, Ubuntu, Mint)
+nec2c.exe                 nec2c for Windows (GPL-3.0, see NOTICE-nec2c.txt), installed by install.bat
+NOTICE-nec2c.txt          origin, license and source of nec2c.exe
 install.bat, install.ps1  Windows installer (install.bat runs install.ps1)
 uninstall.bat, uninstall.ps1  Windows uninstaller
 tools/build_nec2c.sh      downloads and compiles nec2c (Linux, or MSYS2 on Windows)
@@ -401,6 +404,9 @@ implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 <https://www.gnu.org/licenses/> for details.
 
 The user manuals in `docs/manual/` are distributed under the same license.
+
+`nec2c.exe` is a separate program, nec2c by Neoklis Kyriazis (5B4AZ) and contributors, also under the GPL v3. Its
+source is at <https://github.com/KJ7LNW/nec2c>; see [NOTICE-nec2c.txt](NOTICE-nec2c.txt).
 
 ---
 

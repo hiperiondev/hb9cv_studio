@@ -1,5 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# hb9cv_gui.py - HB9CV Studio, graphical front end for hb9cv.py
+# Copyright (C) 2026 Emiliano Gonzalez - LU3VEA
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
 """HB9CV Studio - graphical front end for hb9cv.py (NEC2C toolkit).
 
 Requirements:  pip install customtkinter matplotlib numpy     (tkinter ships with Python)
@@ -36,6 +53,10 @@ Languages
 """
 from __future__ import annotations
 
+__author__ = "Emiliano Gonzalez - LU3VEA"
+__license__ = "GPL-3.0-or-later"
+__copyright__ = "Copyright (C) 2026 Emiliano Gonzalez - LU3VEA"
+
 import argparse
 import csv
 import importlib.util
@@ -68,6 +89,17 @@ import customtkinter as ctk
 
 APP_TITLE = "HB9CV Studio"
 SCRIPT_DIR = Path(__file__).resolve().parent
+IS_WIN = sys.platform.startswith("win")
+# On Windows, child processes of the windowless GUI (pythonw) would each open a console window.
+NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if IS_WIN else {}
+
+
+def console_python() -> str:
+    """Interpreter for hb9cv.py: python.exe instead of pythonw.exe on Windows, so the engine has real stdout/stderr."""
+    exe = Path(sys.executable)
+    if exe.name.lower() == "pythonw.exe" and (exe.parent / "python.exe").is_file():
+        return str(exe.parent / "python.exe")
+    return sys.executable
 CONFIG_PATH = Path.home() / ".hb9cv_gui.json"
 
 # Light palette used in the plots
@@ -1860,6 +1892,8 @@ def beamwidth_lin(x, y, drop=3.0, circular=False):
 
 
 def find_nec2c(custom: str = ""):
+    """Path of nec2c: the GUI field (a file or a folder), the PATH, the bin folder next to this program, then a
+    nec2c.exe shipped next to this program."""
     custom = (custom or "").strip()
     if custom:
         p = Path(custom)
@@ -1869,7 +1903,14 @@ def find_nec2c(custom: str = ""):
                     return str(p / n)
         elif p.exists():
             return str(p)
-    return shutil.which("nec2c") or shutil.which("nec2c.exe")
+    found = shutil.which("nec2c") or shutil.which("nec2c.exe")
+    if found:
+        return found
+    names = ("bin/nec2c.exe", "nec2c.exe") if IS_WIN else ("bin/nec2c",)
+    for p in (SCRIPT_DIR / n for n in names):
+        if p.is_file() and os.access(p, os.X_OK):
+            return str(p)
+    return None
 
 
 def deck_head(nec_path: Path, freq_hint: float):
@@ -1915,7 +1956,7 @@ def _run_deck(core, exe, td: Path, name: str, lines) -> tuple[Path, str]:
         r = core.run_nec2c(exe, inp, out, timeout=1200)
     else:
         r = subprocess.run([exe, "-i", inp.name, "-o", out.name], cwd=str(td), capture_output=True, text=True,
-                           timeout=1200)
+                           timeout=1200, **NO_WINDOW)
     if r.returncode or not out.exists():
         raise RuntimeError(tr("err.nec2c_failed", rc=r.returncode, msg=(r.stderr or r.stdout).strip()[:300]))
     text = out.read_text(errors="replace")
@@ -2832,7 +2873,6 @@ class PlotPane(ctk.CTkFrame):
 # ======================================================================================
 
 RTAB_IDS = ("Antenna", "Pattern 2D", "Pattern 3D", "Matching", "Summary", "Log")
-IS_WIN = sys.platform.startswith("win")
 IS_MAC = sys.platform == "darwin"
 
 
@@ -2855,6 +2895,13 @@ class App(ctk.CTk):
         self._apply_scale()
 
         self.title(f"{APP_TITLE} - {tr('app.subtitle')}")
+        icon = SCRIPT_DIR / "assets" / "hb9cv-studio.png"
+        if icon.is_file():
+            try:
+                self._icon = tk.PhotoImage(file=str(icon))
+                self.iconphoto(True, self._icon)
+            except tk.TclError:
+                pass
         self.configure(fg_color="#eef1f6")
         self._apply_geometry()
 
@@ -3649,7 +3696,7 @@ class App(ctk.CTk):
         if p and p.poll() is None:
             try:
                 if os.name == "nt":
-                    subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)], capture_output=True)
+                    subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)], capture_output=True, **NO_WINDOW)
                 else:
                     os.killpg(os.getpgid(p.pid), signal.SIGTERM)
             except Exception:
@@ -3671,9 +3718,9 @@ class App(ctk.CTk):
             env["PATH"] = str(Path(exe).resolve().parent) + os.pathsep + env.get("PATH", "")
             if ctx["mode"] in ("generate", "optimize"):
                 argv = argv + [f"--nec2c={exe}"]
-        cmd = [sys.executable, "-u", str(self.core_path), *argv]
+        cmd = [console_python(), "-u", str(self.core_path), *argv]
         self.q.put(("log", "$ " + " ".join(shlex.quote(a) for a in cmd[2:]) + "\n\n"))
-        kw = {"start_new_session": True} if os.name != "nt" else {}
+        kw = {"start_new_session": True} if os.name != "nt" else dict(NO_WINDOW)
         try:
             self.proc = subprocess.Popen(cmd, cwd=str(ctx["cwd"]), env=env, stdout=subprocess.PIPE,
                                          stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", **kw)
@@ -3951,7 +3998,11 @@ class App(ctk.CTk):
 
 
 def parse_cli(argv=None):
-    ap = argparse.ArgumentParser(description="HB9CV Studio - graphical front end for hb9cv.py")
+    ap = argparse.ArgumentParser(
+        description="HB9CV Studio - graphical front end for hb9cv.py",
+        epilog="Copyright (C) 2026 Emiliano Gonzalez - LU3VEA. License GPLv3+: GNU GPL version 3 or later "
+               "<https://www.gnu.org/licenses/gpl.html>. This is free software: you are free to change and "
+               "redistribute it. There is NO WARRANTY, to the extent permitted by law.")
     ap.add_argument("--load-default-example", action="store_true",
                     help="preload the most common 2 m HB9CV (146 MHz, 0.125 lambda spacing, crossed open-wire "
                          "phase line, front element fed, 1:1 balun, free space, horizontal) in every GUI field "

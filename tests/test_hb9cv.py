@@ -176,3 +176,15 @@ def test_find_nec2c_uses_bundled_bin(tmp_path, monkeypatch):
     monkeypatch.setattr(h.shutil, "which", lambda name: None)
     monkeypatch.delenv(h.NEC2C_ENV, raising=False)
     assert h.find_nec2c() == str(exe)
+
+
+def test_find_nec2c_uses_exe_next_to_program(tmp_path, monkeypatch):
+    """On Windows a nec2c.exe shipped in the project folder is found when nothing else provides nec2c; elsewhere
+    it is ignored, since a Windows executable cannot run there."""
+    exe = tmp_path / "nec2c.exe"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    monkeypatch.setattr(h, "__file__", str(tmp_path / "hb9cv.py"))
+    monkeypatch.setattr(h.shutil, "which", lambda name: None)
+    monkeypatch.delenv(h.NEC2C_ENV, raising=False)
+    assert h.find_nec2c() == (str(exe) if h.os.name == "nt" else None)

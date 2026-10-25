@@ -1,0 +1,19 @@
+nec2c.exe - third-party component distributed with HB9CV Studio
+================================================================
+
+The file nec2c.exe in the root folder of this project (and any runtime DLLs next to it) is a Windows build of
+nec2c, the C translation of the NEC-2 antenna simulator.
+
+  Program:   nec2c
+  Author:    Neoklis Kyriazis, 5B4AZ, and contributors
+  License:   GNU General Public License, version 3 (see the file LICENSE in this folder)
+  Source:    https://github.com/KJ7LNW/nec2c
+
+nec2c is a separate program: HB9CV Studio runs it as an external process and is not linked with it.
+
+Corresponding source code: the source of the distributed nec2c.exe is the nec2c repository named above, at the
+version reported by "nec2c.exe -v". The script tools/build_nec2c.sh downloads that source and rebuilds nec2c
+(on Windows inside MSYS2: pacman -S gcc tar curl git, then bash tools/build_nec2c.sh bin).
+
+The Windows installer (install.bat / install.ps1) copies nec2c.exe and its runtime DLLs to the bin folder of the
+installation. On Linux the distribution package nec2c is used, or nec2c is compiled from the same source.

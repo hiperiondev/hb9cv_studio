@@ -152,7 +152,7 @@ info "Python: $PY ($("$PY" -c 'import sys; print(sys.version.split()[0])'))"
 # ---------------------------------------------------------------- program files
 info "Installing HB9CV Studio in $PREFIX"
 mkdir -p "$PREFIX"
-for f in hb9cv.py hb9cv_gui.py requirements.txt LICENSE README.md install.sh uninstall.sh; do
+for f in hb9cv.py hb9cv_gui.py requirements.txt LICENSE NOTICE-nec2c.txt README.md install.sh uninstall.sh; do
     [ -f "$SRC/$f" ] && cp -f "$SRC/$f" "$PREFIX/"
 done
 for d in assets docs tools; do

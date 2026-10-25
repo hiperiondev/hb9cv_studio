@@ -1,5 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# hb9cv.py - HB9CV toolkit for NEC2C (part of HB9CV Studio)
+# Copyright (C) 2026 Emiliano Gonzalez - LU3VEA
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
 """HB9CV toolkit for NEC2C: model generator, optimizer, L-network matching and sweep.
 
 One program, four modes selected with --mode:
@@ -181,6 +198,10 @@ L-network (match / sweep modes):
   Neither mode changes or simulates the NEC model; the calculated components are a
   first estimate at a single frequency and need later validation (antenna analyzer/VNA).
 """
+__author__ = "Emiliano Gonzalez - LU3VEA"
+__license__ = "GPL-3.0-or-later"
+__copyright__ = "Copyright (C) 2026 Emiliano Gonzalez - LU3VEA"
+
 import argparse
 import cmath
 import contextlib
@@ -836,6 +857,8 @@ def print_element_currents(path, ports=None, freq_section=0):
 
 
 NEC2C_MAX_PATH = 80   # nec2c keeps the -i / -o file names in 81-byte buffers and aborts on longer ones
+# On Windows, child processes started from a windowless GUI (pythonw) would each open a console window.
+NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
 
 
 def run_nec2c(exe, deck, out, timeout=None):
@@ -847,11 +870,11 @@ def run_nec2c(exe, deck, out, timeout=None):
     deck, out = Path(deck).resolve(), Path(out).resolve()
     if deck.parent == out.parent and max(len(deck.name), len(out.name)) <= NEC2C_MAX_PATH:
         return subprocess.run([exe, "-i", deck.name, "-o", out.name], cwd=str(deck.parent), text=True,
-                              capture_output=True, timeout=timeout)
+                              capture_output=True, timeout=timeout, **NO_WINDOW)
     with tempfile.TemporaryDirectory(prefix="nec") as td:
         shutil.copyfile(deck, Path(td) / "in.nec")
         r = subprocess.run([exe, "-i", "in.nec", "-o", "in.out"], cwd=td, text=True, capture_output=True,
-                           timeout=timeout)
+                           timeout=timeout, **NO_WINDOW)
         if (Path(td) / "in.out").exists():
             shutil.copyfile(Path(td) / "in.out", out)
         return r
@@ -861,7 +884,7 @@ def nec2c_version(exe):
     """First line printed by `nec2c -v` (or --version); 'unknown' if it cannot be obtained."""
     for flag in ("-v", "--version"):
         try:
-            r = subprocess.run([exe, flag], capture_output=True, text=True, timeout=10)
+            r = subprocess.run([exe, flag], capture_output=True, text=True, timeout=10, **NO_WINDOW)
         except (OSError, subprocess.SubprocessError):
             continue
         txt = ((r.stdout or "") + (r.stderr or "")).strip()
@@ -2170,7 +2193,8 @@ NEC2C_ENV = "HB9CV_NEC2C"
 
 def find_nec2c(args=None):
     """Path of the nec2c executable: --nec2c (a file or a folder holding nec2c/nec2c.exe), then the HB9CV_NEC2C
-    environment variable, then the PATH; None when none of them gives an executable."""
+    environment variable, then the PATH, then the bin folder next to this program (where the installers put it)
+    and finally a nec2c.exe shipped next to this program; None when none of them gives an executable."""
     for cand in (getattr(args, "nec2c", None), os.environ.get(NEC2C_ENV)):
         cand = (cand or "").strip()
         if not cand:
@@ -2185,7 +2209,15 @@ def find_nec2c(args=None):
         found = shutil.which(cand)
         if found:
             return found
-    return shutil.which("nec2c") or shutil.which("nec2c.exe")
+    found = shutil.which("nec2c") or shutil.which("nec2c.exe")
+    if found:
+        return found
+    here = Path(__file__).resolve().parent
+    names = ("bin/nec2c.exe", "nec2c.exe") if os.name == "nt" else ("bin/nec2c",)
+    for p in (here / n for n in names):
+        if p.is_file() and os.access(p, os.X_OK):
+            return str(p)
+    return None
 
 
 OPENWIRE_MIN_RATIO = 1.2      # D/d below this leaves almost no air between the wires
@@ -6086,7 +6118,10 @@ def build_parser():
         epilog="Each option lists the modes in which it is used; options given in a mode that "
                "does not use them are reported and ignored.\n"
                "Example: python3 hb9cv.py --mode generate --network tl --mount isolated "
-               "--freq 145 -o hb9cv_145.nec")
+               "--freq 145 -o hb9cv_145.nec\n\n"
+               "Copyright (C) 2026 Emiliano Gonzalez - LU3VEA. License GPLv3+: GNU GPL version 3 or later "
+               "<https://www.gnu.org/licenses/gpl.html>. This is free software: you are free to change and "
+               "redistribute it. There is NO WARRANTY, to the extent permitted by law.")
     table = {}   # option string -> (dest, modes)
 
     def opt(modes, *names, **kw):

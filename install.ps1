@@ -24,15 +24,17 @@
     1. Finds Python 3.9 or newer with Tk (offers to install Python 3.12 with winget when it is missing).
     2. Copies the program to InstallDir (default %LOCALAPPDATA%\Programs\HB9CV-Studio).
     3. Creates a Python virtual environment there with customtkinter, matplotlib and numpy.
-    4. Provides nec2c.exe in InstallDir\bin: a copy of -Nec2c, one already in the PATH, or one compiled
-       from source with MSYS2 (offers to install MSYS2 with winget).
+    4. Provides nec2c.exe in InstallDir\bin, the first that applies: a copy of -Nec2c; the nec2c.exe shipped
+       in the project folder (root or bin\), with the runtime DLLs next to it; the one already installed; one in
+       the PATH; or one compiled from source with MSYS2 (offers to install MSYS2 with winget).
     5. Creates Start menu and desktop shortcuts and the hb9cv.cmd / hb9cv-studio.cmd launchers.
     Running it again updates an existing installation. uninstall.ps1 removes it.
 
 .PARAMETER InstallDir
     Installation folder.
 .PARAMETER Nec2c
-    Path of an existing nec2c.exe (or of the folder that contains it) to copy into the installation.
+    Path of a nec2c.exe (or of the folder that contains it) to copy into the installation instead of the one
+    shipped in the project folder.
 .PARAMETER SkipNec2c
     Do not look for, copy or compile nec2c.
 .PARAMETER NoShortcuts
@@ -152,6 +154,27 @@ function Build-Nec2c([string]$Dest) {
     return ($LASTEXITCODE -eq 0)
 }
 
+# $true when the nec2c executable starts (nec2c -v prints its version and exits with code 0).
+function Test-Nec2c([string]$Exe) {
+    $ErrorActionPreference = 'Continue'
+    try { & $Exe -v *> $null } catch { return $false }
+    return ($LASTEXITCODE -eq 0)
+}
+
+# Copies nec2c.exe and the runtime DLLs that sit next to it (MSYS2, Cygwin or MinGW builds) into $Dest as
+# $Dest\nec2c.exe; returns $true when the copy runs.
+function Install-Nec2cCopy([string]$Exe, [string]$Dest) {
+    $from = Split-Path -Parent (Resolve-Path $Exe).Path
+    $target = Join-Path $Dest 'nec2c.exe'
+    if ((Resolve-Path $Exe).Path -ne $target) { Copy-Item $Exe -Destination $target -Force }
+    $runtime = @('msys-*.dll', 'cyg*.dll', 'libgcc*.dll', 'libwinpthread*.dll', 'libstdc++*.dll', 'libquadmath*.dll',
+                 'libgfortran*.dll')
+    Get-ChildItem $from -Filter '*.dll' -ErrorAction SilentlyContinue |
+        Where-Object { $n = $_.Name; @($runtime | Where-Object { $n -like $_ }).Count -gt 0 } |
+        ForEach-Object { if ($_.DirectoryName -ne $Dest) { Copy-Item $_.FullName -Destination $Dest -Force } }
+    return (Test-Nec2c $target)
+}
+
 function New-Shortcut([string]$Path, [string]$Target, [string]$Arguments, [string]$Icon, [string]$Description) {
     $shell = New-Object -ComObject WScript.Shell
     $lnk = $shell.CreateShortcut($Path)
@@ -190,7 +213,7 @@ Info "Python: $py ($pyver)"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 $same = ((Resolve-Path $Src).Path.TrimEnd('\') -ieq (Resolve-Path $InstallDir).Path.TrimEnd('\'))
 if (-not $same) {
-    foreach ($f in @('hb9cv.py', 'hb9cv_gui.py', 'requirements.txt', 'LICENSE', 'README.md',
+    foreach ($f in @('hb9cv.py', 'hb9cv_gui.py', 'requirements.txt', 'LICENSE', 'README.md', 'NOTICE-nec2c.txt',
                      'install.ps1', 'install.bat', 'uninstall.ps1', 'uninstall.bat')) {
         $p = Join-Path $Src $f
         if (Test-Path $p) { Copy-Item $p -Destination $InstallDir -Force }
@@ -216,30 +239,39 @@ if ($LASTEXITCODE -ne 0) { Fail 'pip could not install the Python packages (chec
 # ------------------------------------------------------------------ nec2c
 $binDir = Join-Path $InstallDir 'bin'
 $bundled = Join-Path $binDir 'nec2c.exe'
+# nec2c.exe shipped with the project: in its root folder, or in its bin folder.
+$shipped = @((Join-Path $Src 'nec2c.exe'), (Join-Path $Src 'bin\nec2c.exe')) | Where-Object { Test-Path $_ } |
+    Select-Object -First 1
 if (-not $SkipNec2c) {
     New-Item -ItemType Directory -Force -Path $binDir | Out-Null
+    $source = ''
     if ($Nec2c) {
-        $n = $Nec2c
-        if (Test-Path $n -PathType Container) { $n = Join-Path $n 'nec2c.exe' }
-        if (-not (Test-Path $n)) { Fail "nec2c.exe not found: $Nec2c" }
-        $folder = Split-Path -Parent (Resolve-Path $n).Path
-        Copy-Item $n -Destination $bundled -Force
-        # MSYS2 / Cygwin builds need their runtime DLLs next to the executable.
-        Get-ChildItem $folder -Filter '*.dll' |
-            Where-Object { $_.Name -like 'msys-*.dll' -or $_.Name -like 'cyg*.dll' } |
-            Copy-Item -Destination $binDir -Force
-        Info "nec2c: copied $n"
-    } elseif (Test-Path $bundled) {
+        $source = $Nec2c
+        if (Test-Path $source -PathType Container) { $source = Join-Path $source 'nec2c.exe' }
+        if (-not (Test-Path $source)) { Fail "nec2c.exe not found: $Nec2c" }
+    } elseif ($shipped) {
+        $source = $shipped
+    }
+    if ($source) {
+        if (Install-Nec2cCopy $source $binDir) {
+            Info "nec2c: $source installed as $bundled"
+        } else {
+            Warn "the nec2c.exe in $source does not run on this computer (a runtime DLL may be missing)."
+            $source = ''
+        }
+    }
+    if ($source) {
+        # installed above
+    } elseif ((Test-Path $bundled) -and (Test-Nec2c $bundled)) {
         Info "nec2c: $bundled"
     } elseif (Get-Command nec2c.exe -ErrorAction SilentlyContinue) {
         Info ("nec2c: " + (Get-Command nec2c.exe).Source)
+    } elseif (Build-Nec2c $binDir) {
+        Info "nec2c: compiled into $bundled"
     } else {
-        if (Build-Nec2c $binDir) {
-            Info "nec2c: compiled into $bundled"
-        } else {
-            Warn 'nec2c is not installed: the program starts, but simulations will not run.'
-            Warn 'Run this installer again, or use -Nec2c C:\path\to\nec2c.exe, or set its path in the nec2c field of the window.'
-        }
+        Warn 'nec2c is not installed: the program starts, but simulations will not run.'
+        Warn ('Put nec2c.exe in the project folder and run this installer again, or use -Nec2c C:\path\to\nec2c.exe, ' +
+              'or set its path in the nec2c field of the window.')
     }
 }
 
