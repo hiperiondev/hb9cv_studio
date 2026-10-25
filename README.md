@@ -1,5 +1,7 @@
 # HB9CV Studio
 
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+
 **Design, simulate, optimize and match a two-element HB9CV beam antenna with NEC-2 (nec2c).**
 
 HB9CV Studio is a Python toolkit for radio amateurs and antenna builders. It writes NEC-2 models of the classic
@@ -7,6 +9,8 @@ HB9CV (two driven elements fed through a crossed phasing line), runs them throug
 **nec2c** (a C port of NEC-2), and turns the results into the numbers and drawings you need
 to build the antenna: gain, front-to-back ratio, beamwidth, input impedance, VSWR, matching network and a
 complete build sheet.
+
+Author: **Emiliano Gonzalez - LU3VEA**
 
 It comes in two parts:
 
@@ -80,37 +84,160 @@ It comes in two parts:
 
 ## Requirements
 
-- **Python 3.9 or newer**
-- Python packages: `customtkinter`, `matplotlib`, `numpy` (the GUI only; the engine uses the standard library)
-- **Tk**: included with Python on Windows and macOS. On Debian/Ubuntu run `sudo apt install python3-tk`.
-- **nec2c**: needed for simulation, optimization and pattern plots. Without it you can still write models and design
-  matching networks from typed impedances.
+| | Linux (Fedora, Debian, Ubuntu, Linux Mint) | Windows 10 / 11 |
+|---|---|---|
+| Python | 3.9 or newer with Tk and venv (distribution packages) | 3.9 or newer from python.org (includes Tk) |
+| Python packages | `customtkinter`, `matplotlib`, `numpy` (installed in a virtual environment) | same |
+| nec2c | distribution package `nec2c`, or compiled from source | compiled from source with MSYS2, or an existing `nec2c.exe` |
 
-## Installation
+nec2c is needed for simulation, optimization and the pattern plots. Without it you can still write models and design
+matching networks from typed impedances. The engine `hb9cv.py` only uses the Python standard library; the three
+packages are for the GUI.
+
+The installers below do everything for you. The manual steps are listed after each installer for reference.
+
+## Installation on Linux
+
+Tested distributions: **Fedora**, **Debian**, **Ubuntu** and **Linux Mint** (and their derivatives).
+
+### With the installer (recommended)
 
 ```bash
-git clone https://github.com/<user>/<repo>.git
-cd <repo>
-python3 -m pip install customtkinter matplotlib numpy
-
-# nec2c
-sudo apt install nec2c            # Debian / Ubuntu / Mint
-# other systems: install your package manager's nec2c, or build it from source
-# Windows: download a nec2c.exe build and point the GUI (or --nec2c) to it
+git clone https://github.com/<user>/<repo>.git hb9cv-studio
+cd hb9cv-studio
+./install.sh
 ```
 
-The program looks for nec2c in this order:
+Run `install.sh` as your normal user, not with `sudo`. It calls `sudo` itself for the system packages, so it may ask for your
+password. The installer:
+
+1. installs the system packages:
+   - Fedora: `sudo dnf install python3 python3-pip python3-tkinter nec2c`
+   - Debian / Ubuntu / Mint: `sudo apt install python3 python3-venv python3-pip python3-tk nec2c`
+2. if the distribution has no `nec2c` package, compiles it from source (`tools/build_nec2c.sh`, which needs `gcc`);
+3. copies the program to `~/.local/share/hb9cv-studio`;
+4. creates a virtual environment there with `customtkinter`, `matplotlib` and `numpy`;
+5. creates the commands `hb9cv-studio` (GUI) and `hb9cv` (command line) in `~/.local/bin`;
+6. adds **HB9CV Studio** with its icon to the applications menu.
+
+| Option | Effect |
+|---|---|
+| `--prefix DIR` | install somewhere else |
+| `--no-system-deps` | skip dnf/apt (install Python, Tk and nec2c yourself) |
+| `--build-nec2c` / `--no-build-nec2c` | always / never compile nec2c from source |
+| `--no-desktop` | no menu entry |
+| `-y` | do not ask questions |
+
+Start the program from the applications menu, or from a terminal:
+
+```bash
+hb9cv-studio                 # graphical interface
+hb9cv --help                 # command line
+```
+
+If the shell says `hb9cv-studio: command not found`, log out and back in once. Most distributions add `~/.local/bin` to
+the `PATH` at login once the folder exists. Alternatively run `~/.local/bin/hb9cv-studio`.
+
+- **Update:** `git pull`, then `./install.sh` again (your settings are kept).
+- **Uninstall:** `./uninstall.sh` (add `--purge` to also remove the settings file `~/.hb9cv_gui.json`).
+  System packages are left installed.
+
+### Manually
+
+```bash
+# Fedora
+sudo dnf install python3 python3-pip python3-tkinter nec2c
+# Debian / Ubuntu / Linux Mint
+sudo apt install python3 python3-venv python3-pip python3-tk nec2c
+
+cd hb9cv-studio
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python hb9cv_gui.py          # GUI
+.venv/bin/python hb9cv.py --help       # command line
+```
+
+If your distribution has no `nec2c` package, `tools/build_nec2c.sh` compiles it into `bin/` next to the program, where
+it is found automatically.
+
+## Installation on Windows
+
+### With the installer (recommended)
+
+1. Download the project: **Code → Download ZIP** on GitHub. Extract it, for example to `Downloads\hb9cv-studio`.
+2. Double-click **`install.bat`**. If Windows SmartScreen warns you, choose *More info → Run anyway*.
+3. Answer the questions. The installer works for your user only and needs no administrator rights. It:
+   - looks for Python 3.9+ with Tk. If there is none, it offers to install Python 3.12 with `winget`;
+   - copies the program to `%LOCALAPPDATA%\Programs\HB9CV-Studio`;
+   - creates a virtual environment there with `customtkinter`, `matplotlib` and `numpy`;
+   - provides `nec2c.exe` in its `bin` folder. If nec2c is not in the `PATH`, the installer offers to install
+     [MSYS2](https://www.msys2.org/) with `winget` (about 500 MB). It then compiles nec2c from source and copies
+     `nec2c.exe` with its runtime DLLs. The first MSYS2 run takes several minutes;
+   - creates **HB9CV Studio** shortcuts in the Start menu and on the desktop. The Start menu folder also links to
+     the three manuals and to the uninstaller.
+
+PowerShell options, for example
+`powershell -ExecutionPolicy Bypass -File install.ps1 -AddToPath -Yes`:
+
+| Option | Effect |
+|---|---|
+| `-InstallDir DIR` | install somewhere else |
+| `-Nec2c C:\path\nec2c.exe` | use an existing nec2c.exe (MSYS2/Cygwin DLLs next to it are copied too) |
+| `-SkipNec2c` | do not look for or compile nec2c |
+| `-AddToPath` | add the program folder to your `PATH`, so `hb9cv` and `hb9cv-studio` work in any terminal |
+| `-NoShortcuts` | no Start menu or desktop shortcuts |
+| `-Yes` | do not ask questions |
+
+Start the program from the Start menu or the desktop. The command line is `hb9cv.cmd` in the program folder
+(or just `hb9cv` with `-AddToPath`):
+
+```bat
+hb9cv --help
+hb9cv --mode generate --run -o first.nec
+```
+
+- **Update:** download the new version and run `install.bat` again.
+- **Uninstall:** use *Start menu → HB9CV Studio → Uninstall HB9CV Studio*, or run `uninstall.bat` (add `-Purge` to
+  also remove the settings file). Python and MSYS2 are left installed; remove them from *Settings → Apps* if you no
+  longer need them.
+
+### Manually
+
+1. Install Python 3 from <https://www.python.org/downloads/>. Tick **Add python.exe to PATH** and keep
+   **tcl/tk and IDLE** selected.
+2. Get `nec2c.exe`:
+   - install MSYS2;
+   - in the *MSYS2 MSYS* terminal, go to the project folder and run
+     `pacman -S --needed gcc tar curl git` and then `bash tools/build_nec2c.sh bin`;
+   - this puts `nec2c.exe` and its DLLs in `bin\`, where the program finds them.
+3. In a terminal opened in the project folder:
+
+```bat
+py -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\pythonw hb9cv_gui.py
+.venv\Scripts\python hb9cv.py --help
+```
+
+**Alternative: WSL.** On Windows 11 you can also use the Linux installation inside WSL (Ubuntu) with
+`wsl --install`. The GUI opens as a normal window through WSLg.
+
+### Where the program looks for nec2c
+
 1. the `nec2c` field of the GUI, or `--nec2c PATH` (a file, or a folder containing `nec2c` / `nec2c.exe`);
 2. the `HB9CV_NEC2C` environment variable;
-3. the `PATH`.
+3. the `PATH`;
+4. the `bin` folder next to `hb9cv.py` (where the installers and `tools/build_nec2c.sh` put it).
 
 Keep `hb9cv.py` and `hb9cv_gui.py` in the same folder.
 
 ## Quick start (GUI)
 
+Start **HB9CV Studio** from the menu (or `hb9cv-studio`). To open it with a complete 146 MHz optimization ready to run:
+
 ```bash
-python3 hb9cv_gui.py
-python3 hb9cv_gui.py --load-default-example   # opens with a complete 146 MHz optimization ready to run
+hb9cv-studio --load-default-example          # Linux, after install.sh
+python3 hb9cv_gui.py --load-default-example  # from the source folder
 ```
 
 1. Choose a **Work folder**; all output files go there.
@@ -130,8 +257,11 @@ The **Copy cmd** button copies the equivalent command line.
 ## Command line
 
 ```bash
-python3 hb9cv.py --help
+hb9cv --help                 # after the installer (Linux, or Windows with -AddToPath)
+python3 hb9cv.py --help      # from the source folder (Windows: py hb9cv.py --help)
 ```
+
+The examples below use `python3 hb9cv.py`. After installing, `hb9cv` does the same.
 
 | Mode | Purpose |
 |---|---|
@@ -221,8 +351,8 @@ The built-in help (`--help`, and the **?** badge next to each field in the GUI) 
 ## Tests
 
 ```bash
-python3 -m pip install pytest
-python3 -m pytest tests
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
+.venv/bin/python -m pytest tests
 ```
 
 Tests marked as needing nec2c are skipped when nec2c is not found.
@@ -230,9 +360,18 @@ Tests marked as needing nec2c are skipped when nec2c is not found.
 ## Project layout
 
 ```
-hb9cv.py              engine (CLI): generate / optimize / match / sweep
-hb9cv_gui.py          HB9CV Studio graphical interface
-
+hb9cv.py                  engine (CLI): generate / optimize / match / sweep
+hb9cv_gui.py              HB9CV Studio graphical interface
+requirements.txt          Python packages (customtkinter, matplotlib, numpy)
+install.sh, uninstall.sh  Linux installer / uninstaller (Fedora, Debian, Ubuntu, Mint)
+install.bat, install.ps1  Windows installer (install.bat runs install.ps1)
+uninstall.bat, uninstall.ps1  Windows uninstaller
+tools/build_nec2c.sh      downloads and compiles nec2c (Linux, or MSYS2 on Windows)
+assets/                   application icon (PNG, ICO)
+tests/test_hb9cv.py       regression tests (pytest)
+docs/manual/              user manuals (EN / ES / IT, PDF)
+docs/images/              screenshots used in this README
+LICENSE                   GNU General Public License v3
 ```
 
 ## Contributing
@@ -240,10 +379,29 @@ hb9cv_gui.py          HB9CV Studio graphical interface
 Bug reports and pull requests are welcome. Please include:
 - the exact command (the GUI's **Copy cmd** button gives it);
 - the output of the **Log** tab;
-- the nec2c version and your operating system.
+- the nec2c version and your operating system (distribution and version, or Windows version).
 
-Run the tests before submitting changes.
+Run the tests before submitting changes. Contributions are accepted under the same license as the project
+(GPL-3.0-or-later).
+
+## Author
+
+**Emiliano Gonzalez - LU3VEA**
+
+## License
+
+Copyright (C) 2026 Emiliano Gonzalez - LU3VEA
+
+This program is free software: you can redistribute it and/or modify it under the terms of the
+**GNU General Public License** as published by the Free Software Foundation, either **version 3** of the License,
+or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the
+implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the [LICENSE](LICENSE) file or
+<https://www.gnu.org/licenses/> for details.
+
+The user manuals in `docs/manual/` are distributed under the same license.
 
 ---
 
-*73 and good building!*
+*73 and good building! — LU3VEA*

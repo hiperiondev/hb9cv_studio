@@ -1,0 +1,9 @@
+# Line endings: shell scripts must keep LF, Windows scripts CRLF.
+*.sh    text eol=lf
+*.py    text eol=lf
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+*.png   binary
+*.ico   binary
+*.pdf   binary
