@@ -1,19 +1,41 @@
 nec2c.exe - third-party component distributed with HB9CV Studio
 ================================================================
 
-The file nec2c.exe in the root folder of this project (and any runtime DLLs next to it) is a Windows build of
-nec2c, the C translation of the NEC-2 antenna simulator.
+The file nec2c.exe in the root folder of this project is a Windows build of nec2c, the C translation of the
+NEC-2 antenna simulator.
 
-  Program:   nec2c
+  Program:   nec2c 1.3.3 (nec2c.exe -v prints "nec2c 1.3.3")
   Author:    Neoklis Kyriazis, 5B4AZ, and contributors
   License:   GNU General Public License, version 3 (see the file LICENSE in this folder)
-  Source:    https://github.com/KJ7LNW/nec2c
+  Source:    https://github.com/KJ7LNW/nec2c, tag v1.3.3 (commit 55be1e0e3fe5ee9dad4ce6050711450d19c562fd)
 
 nec2c is a separate program: HB9CV Studio runs it as an external process and is not linked with it.
 
-Corresponding source code: the source of the distributed nec2c.exe is the nec2c repository named above, at the
-version reported by "nec2c.exe -v". The script tools/build_nec2c.sh downloads that source and rebuilds nec2c
-(on Windows inside MSYS2: pacman -S gcc tar curl git, then bash tools/build_nec2c.sh bin).
+Corresponding source code and build
+-----------------------------------
+nec2c.exe is built from the unmodified upstream source of the tag above. MinGW-w64 lacks four POSIX calls
+that nec2c uses (times, sysconf, sigaction, sigemptyset); the header tools/mingw-compat/sys/times.h of this
+project (GPL-3.0-or-later) provides them and is the only addition. The executable is self-contained (it needs
+only KERNEL32.dll and msvcrt.dll, which are part of Windows).
 
-The Windows installer (install.bat / install.ps1) copies nec2c.exe and its runtime DLLs to the bin folder of the
-installation. On Linux the distribution package nec2c is used, or nec2c is compiled from the same source.
+It is rebuilt on Linux with:
+
+    bash tools/build_nec2c.sh --mingw .
+
+which downloads the tag, then compiles it with
+
+    x86_64-w64-mingw32-gcc -O2 -static -Wl,--no-insert-timestamp -I tools/mingw-compat \
+        -DPACKAGE_STRING="\"nec2c 1.3.3\"" -o nec2c.exe calculations.c geometry.c input.c matrix.c \
+        network.c shared.c fields.c ground.c main.c misc.c radiation.c somnec.c -lm
+
+Toolchain of the distributed file: x86_64-w64-mingw32-gcc 13 (Ubuntu package gcc-mingw-w64-x86-64, win32
+threads). SHA-256 of the distributed nec2c.exe:
+
+    44d8d99fb2de6d3d0efdabb48d2b79427962744df783fa7a7ded98793e74ccca
+
+On Windows, nec2c can also be compiled inside MSYS2 (pacman -S gcc tar curl git, then
+bash tools/build_nec2c.sh bin); that build needs the MSYS runtime DLLs, which the script copies next to it.
+
+The Windows installer (install.bat / install.ps1) copies nec2c.exe (and any runtime DLLs next to it) to the bin
+folder of the installation. On Linux the distribution package nec2c is used, or nec2c is compiled from the same
+source with tools/build_nec2c.sh.

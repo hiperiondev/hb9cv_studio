@@ -175,6 +175,26 @@ function Install-Nec2cCopy([string]$Exe, [string]$Dest) {
     return (Test-Nec2c $target)
 }
 
+function Set-UserPathEntry([string]$Dir, [bool]$Present) {
+    # Adds or removes $Dir in the user PATH. The raw registry value is read and written back as REG_EXPAND_SZ, so
+    # entries such as %USERPROFILE%\bin keep their variables; nothing is written when the value does not change.
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+    try {
+        $raw = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        $parts = @($raw.Split(';') | Where-Object { $_ -ne '' -and $_ -ne $Dir })
+        if ($Present) { $parts = @($parts) + $Dir }
+        $new = ($parts -join ';')
+        if ($new -eq $raw) { return $false }
+        $key.SetValue('Path', $new, [Microsoft.Win32.RegistryValueKind]::ExpandString)
+    } finally {
+        $key.Close()
+    }
+    # Setting and clearing a user variable through .NET broadcasts WM_SETTINGCHANGE, so new terminals see the PATH.
+    [Environment]::SetEnvironmentVariable('HB9CV_PATH_REFRESH', '1', 'User')
+    [Environment]::SetEnvironmentVariable('HB9CV_PATH_REFRESH', $null, 'User')
+    return $true
+}
+
 function New-Shortcut([string]$Path, [string]$Target, [string]$Arguments, [string]$Icon, [string]$Description) {
     $shell = New-Object -ComObject WScript.Shell
     $lnk = $shell.CreateShortcut($Path)
@@ -288,11 +308,7 @@ Set-Content -Path (Join-Path $InstallDir 'hb9cv-studio.cmd') -Encoding ASCII -Va
 )
 
 if ($AddToPath) {
-    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-    if (-not $userPath) { $userPath = '' }
-    $parts = @($userPath.Split(';') | Where-Object { $_ -ne '' })
-    if ($parts -notcontains $InstallDir) {
-        [Environment]::SetEnvironmentVariable('Path', ((@($parts) + $InstallDir) -join ';'), 'User')
+    if (Set-UserPathEntry $InstallDir $true) {
         Info 'Added the installation folder to the user PATH (open a new terminal to use hb9cv and hb9cv-studio).'
     }
 }

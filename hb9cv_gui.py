@@ -75,6 +75,7 @@ import tempfile
 import textwrap
 import threading
 import types
+import webbrowser
 from pathlib import Path
 
 import numpy as np
@@ -88,6 +89,10 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 
 APP_TITLE = "HB9CV Studio"
+APP_AUTHOR = "Emiliano Gonzalez - LU3VEA"
+APP_LICENSE = "GPL-3.0-or-later"
+APP_LICENSE_URL = "https://www.gnu.org/licenses/gpl-3.0.html"
+PROJECT_URL = "https://github.com/hiperiondev/hb9cv_studio"
 SCRIPT_DIR = Path(__file__).resolve().parent
 IS_WIN = sys.platform.startswith("win")
 # On Windows, child processes of the windowless GUI (pythonw) would each open a console window.
@@ -201,6 +206,10 @@ STR = {
     "ph.none": ("(none)", "(ninguno)", "(nessuno)"),
     # ---- main window widgets
     "ui.language": ("Language", "Idioma", "Lingua"),
+    "ui.author": ("Author", "Autor", "Autore"),
+    "ui.license": ("License", "Licencia", "Licenza"),
+    "ui.project": ("Project", "Proyecto", "Progetto"),
+    "ui.open_link": ("Open in the web browser", "Abrir en el navegador", "Apri nel browser"),
     "ui.scale": ("Scale", "Escala", "Scala"),
     "ui.language.tip": ("Interface language.", "Idioma de la interfaz.", "Lingua dell'interfaccia."),
     "ui.scale.tip": (
@@ -212,7 +221,8 @@ STR = {
         "Tastiera: Ctrl +  /  Ctrl -  /  Ctrl 0 (auto)."),
     "scale.auto": ("Auto", "Auto", "Auto"),
     "ui.workdir": ("Work folder", "Carpeta de trabajo", "Cartella di lavoro"),
-    "ui.nec2c_ph": ("(found in PATH)", "(se busca en el PATH)", "(cercato nel PATH)"),
+    "ui.nec2c_ph": ("(HB9CV_NEC2C or PATH)", "(se busca en HB9CV_NEC2C o en el PATH)",
+                    "(cercato in HB9CV_NEC2C o nel PATH)"),
     "ui.patterns": ("Compute patterns for the plots (nec2c)", "Calcular diagramas para los gráficos (nec2c)",
                     "Calcola i diagrammi per i grafici (nec2c)"),
     "ui.step": ("step", "paso", "passo"),
@@ -748,7 +758,7 @@ HELP_MAX = 2048
 STR.update({
     "help.modes": ("Used in modes: {m}", "Se usa en los modos: {m}", "Usata nelle modalità: {m}"),
     "help.default": ("Default value: {d}", "Valor por defecto: {d}", "Valore predefinito: {d}"),
-    "help.badge": ("Click or hover for help", "Pasa el ratón para ver la ayuda", "Passa il mouse per l'aiuto"),
+    "help.badge": ("Hover for help", "Pasa el ratón para ver la ayuda", "Passa il mouse per l'aiuto"),
 })
 
 HELP = {
@@ -1005,9 +1015,9 @@ HELP = {
         "Nombre del archivo CSV que recibe el resumen del diagrama en función de la frecuencia. Si está vacío es <archivo de salida>_fsweep.csv. Solo se usa junto con el barrido de frecuencia y la opción de diagrama en función de la frecuencia.",
         "Nome del file CSV che riceve il riepilogo del diagramma in funzione della frequenza. Se vuoto è <file di uscita>_fsweep.csv. Usato solo insieme alla scansione di frequenza e all'opzione diagramma in funzione della frequenza."),
     "--band": (
-        "Scores every candidate at N evenly spaced frequencies, written FMIN,FMAX,N (for example 144,146,5), and keeps the worst case: the minimum over frequency of the objective minus the VSWR penalty. This favours designs that hold up across the whole band instead of one frequency. The geometry and line length stay fixed at the design frequency. Empty means a single frequency. Costs N times more simulations.",
-        "Puntúa cada candidato en N frecuencias equiespaciadas, escritas FMIN,FMAX,N (por ejemplo 144,146,5), y conserva el peor caso: el mínimo en frecuencia del objetivo menos la penalización por VSWR. Favorece diseños que se mantienen en toda la banda en vez de a una sola frecuencia. La geometría y la longitud de línea siguen fijadas a la frecuencia de diseño. Vacío significa una sola frecuencia. Cuesta N veces más simulaciones.",
-        "Valuta ogni candidato a N frequenze equispaziate, scritte FMIN,FMAX,N (per esempio 144,146,5), e conserva il caso peggiore: il minimo in frequenza dell'obiettivo meno la penalità VSWR. Favorisce progetti che reggono su tutta la banda invece che a una sola frequenza. Geometria e lunghezza della linea restano fissate alla frequenza di progetto. Vuoto significa una sola frequenza. Costa N volte più simulazioni."),
+        "Scores every candidate at N evenly spaced frequencies, written FMIN,FMAX,N (for example 144,146,5), and keeps the worst case: the minimum over frequency of the objective minus the VSWR penalty. This favours designs that hold up across the whole band instead of one frequency. The geometry and line length stay fixed at the design frequency, which must lie inside the band and is always scored (it is added when it is not one of the N points). Empty means a single frequency. Costs N times more simulations.",
+        "Puntúa cada candidato en N frecuencias equiespaciadas, escritas FMIN,FMAX,N (por ejemplo 144,146,5), y conserva el peor caso: el mínimo en frecuencia del objetivo menos la penalización por VSWR. Favorece diseños que se mantienen en toda la banda en vez de a una sola frecuencia. La geometría y la longitud de línea siguen fijadas a la frecuencia de diseño, que debe estar dentro de la banda y siempre se puntúa (se añade si no es uno de los N puntos). Vacío significa una sola frecuencia. Cuesta N veces más simulaciones.",
+        "Valuta ogni candidato a N frequenze equispaziate, scritte FMIN,FMAX,N (per esempio 144,146,5), e conserva il caso peggiore: il minimo in frequenza dell'obiettivo meno la penalità VSWR. Favorisce progetti che reggono su tutta la banda invece che a una sola frequenza. Geometria e lunghezza della linea restano fissate alla frequenza di progetto, che deve stare dentro la banda ed è sempre valutata (viene aggiunta se non è uno degli N punti). Vuoto significa una sola frequenza. Costa N volte più simulazioni."),
     "--refine": (
         "Rounds of local search after the grid scan. Each round simulates all small moves around the best point in parallel (element lengths, phase or line length and, if enabled, spacing and diameter), keeps the best improvement and halves the step when nothing improves. 0 means grid only. Empty uses the default: 6 rounds with the tl/lc networks, 8 with reflectors or directors, 0 with ideal sources. A Nelder-Mead polish follows (see Nelder-Mead runs).",
         "Rondas de búsqueda local tras el barrido en rejilla. Cada ronda simula en paralelo todos los pequeños movimientos alrededor del mejor punto (longitudes de elementos, fase o longitud de línea y, si se activan, separación y diámetro), conserva la mejor mejora y reduce a la mitad el paso cuando nada mejora. 0 significa solo rejilla. Vacío usa el valor por defecto: 6 rondas con las redes tl/lc, 8 con reflectores o directores, 0 con fuentes ideales. Después sigue un pulido Nelder-Mead (ver Simulaciones Nelder-Mead).",
@@ -1257,9 +1267,9 @@ HELP = {
         'Imprime una tabla con el cambio de ganancia, F/B e impedancia de entrada que producen partes que el modelo por defecto omite, cada una simulada por separado frente al modelo tal como está: un boom metálico (si el boom no se modela), un mástil colocado donde rompe la simetría de los elementos (horizontal: 1 m en una abrazadera lateral de 60 mm; vertical: un mástil lateral de 2 m) y una malla de coaxial sin choke de media longitud de onda. Un conductor en el plano de simetría de los elementos balanceados no lo excita el modelo; esas filas se marcan con * y se explican en vez de leerse como robustez. En optimize se ejecuta sobre el mejor modelo. Requiere nec2c.',
         "Stampa una tabella con la variazione di guadagno, F/B e impedenza d'ingresso causata da parti che il modello predefinito tralascia, ciascuna simulata da sola rispetto al modello così com'è: un boom metallico (se il boom non è modellato), un palo posto dove rompe la simmetria degli elementi (orizzontale: 1 m su un morsetto laterale di 60 mm; verticale: un palo laterale di 2 m) e una calza del coassiale senza choke di mezza lunghezza d'onda. Un conduttore nel piano di simmetria degli elementi bilanciati non viene eccitato dal modello; tali righe sono marcate con * e spiegate invece di essere lette come robustezza. In optimize viene eseguita sul modello migliore. Richiede nec2c."),
     "--check-convergence": (
-        "Simulates the model again with 2n+1 segments per element instead of n and prints the change of gain, F/B and input resistance. A warning is printed above 0.1 dB of gain, 1 dB of F/B or 5 % of resistance: the segmentation is then too coarse for the numbers to be trusted. In optimize it runs on the best model. Needs nec2c.",
-        "Vuelve a simular el modelo con 2n+1 segmentos por elemento en vez de n e imprime el cambio de ganancia, F/B y resistencia de entrada. Se avisa por encima de 0,1 dB de ganancia, 1 dB de F/B o 5 % de resistencia: entonces la segmentación es demasiado gruesa para fiarse de los números. En optimize se ejecuta sobre el mejor modelo. Requiere nec2c.",
-        "Risimula il modello con 2n+1 segmenti per elemento invece di n e stampa la variazione di guadagno, F/B e resistenza d'ingresso. Si avvisa sopra 0,1 dB di guadagno, 1 dB di F/B o 5 % di resistenza: in tal caso la segmentazione è troppo grossolana per fidarsi dei numeri. In optimize viene eseguita sul modello migliore. Richiede nec2c."),
+        "Simulates the model again with 2n+1 segments per element instead of n and prints the change of gain, F/B and input impedance. A warning is printed above 0.1 dB of gain, 1 dB of F/B, 5 % of resistance or 5 % of |Zin|: the segmentation is then too coarse for the numbers to be trusted. In optimize it runs on the best model. Needs nec2c.",
+        "Vuelve a simular el modelo con 2n+1 segmentos por elemento en vez de n e imprime el cambio de ganancia, F/B e impedancia de entrada. Se avisa por encima de 0,1 dB de ganancia, 1 dB de F/B, 5 % de resistencia o 5 % de |Zin|: entonces la segmentación es demasiado gruesa para fiarse de los números. En optimize se ejecuta sobre el mejor modelo. Requiere nec2c.",
+        "Risimula il modello con 2n+1 segmenti per elemento invece di n e stampa la variazione di guadagno, F/B e impedenza d'ingresso. Si avvisa sopra 0,1 dB di guadagno, 1 dB di F/B, 5 % di resistenza o 5 % di |Zin|: in tal caso la segmentazione è troppo grossolana per fidarsi dei numeri. In optimize viene eseguita sul modello migliore. Richiede nec2c."),
     "--feed-style": (
         'Where the phase line and the feed connect. tmatch (the default with the tl and lc networks) is the classic HB9CV: each driven element is a continuous tube with a T-match (two stubs at the tap distance from the centre joined by a bar parallel to the element, on the side facing the other element); the line and the feed connect at the bar centres. The T-match transforms the element impedances so that a short, straight phase line can give the cardioid currents. center connects at the element centres (split, insulated elements) and is used automatically with stepped sections or a modelled feed gap; with a high-impedance open-wire line it cannot reach the cardioid currents with a short line.',
         'Dónde se conectan la línea de fase y la alimentación. tmatch (por defecto con las redes tl y lc) es la HB9CV clásica: cada elemento activo es un tubo continuo con un T-match (dos tramos a la distancia de toma del centro unidos por una barra paralela al elemento, del lado que mira al otro elemento); la línea y la alimentación se conectan en los centros de las barras. El T-match transforma las impedancias de los elementos de modo que una línea de fase corta y recta pueda dar las corrientes de cardioide. center conecta en los centros de los elementos (elementos partidos y aislados) y se usa automáticamente con secciones escalonadas o con la separación de alimentación modelada; con una línea bifilar de alta impedancia no alcanza las corrientes de cardioide con una línea corta.',
@@ -1289,6 +1299,86 @@ HELP = {
         "Diámetros de tubo en mm que puedes comprar, separados por comas (por defecto 6,8,10,12,14,16). El diámetro inicial se ajusta al más cercano y 'Refinar diámetro' recorre esta lista, de modo que el resultado es siempre un tubo real. 'any' mueve el diámetro de forma continua dentro del rango de diámetros.",
         "Diametri dei tubi in mm che puoi acquistare, separati da virgole (predefinito 6,8,10,12,14,16). Il diametro iniziale viene portato al più vicino e 'Raffinare diametro' percorre questo elenco, così il risultato è sempre un tubo reale. 'any' muove il diametro in modo continuo nell'intervallo dei diametri."),
 }
+
+
+HELP.update({
+    "--reflectors": (
+        "Number of passive reflectors placed behind the rear element (0, 1 or 2; NEC tags 21-22). Each one is a continuous tube in the plane of the driven elements, with no source. The program pre-calculates for each reflector a minimum, nominal and maximum length (1.00 to 1.15 times the resonant dipole length of the tube) and spacing (from 0.05 lambda or the tube radii plus the clamp gap, up to 0.40 lambda), prints them as a table and lengthens the boom to hold every element. optimize searches inside those limits.",
+        "Número de reflectores pasivos detrás del elemento trasero (0, 1 o 2; etiquetas NEC 21-22). Cada uno es un tubo continuo en el plano de los elementos excitados, sin fuente. El programa precalcula para cada reflector una longitud mínima, nominal y máxima (1,00 a 1,15 veces la longitud del dipolo resonante del tubo) y una separación (desde 0,05 lambda o los radios de los tubos más el hueco de la abrazadera, hasta 0,40 lambda), las muestra en una tabla y alarga el boom para sostener todos los elementos. optimize busca dentro de esos límites.",
+        "Numero di riflettori passivi dietro l'elemento posteriore (0, 1 o 2; tag NEC 21-22). Ognuno è un tubo continuo nel piano degli elementi alimentati, senza sorgente. Il programma precalcola per ogni riflettore una lunghezza minima, nominale e massima (da 1,00 a 1,15 volte la lunghezza del dipolo risonante del tubo) e una spaziatura (da 0,05 lambda o dai raggi dei tubi più lo spazio del morsetto, fino a 0,40 lambda), le mostra in una tabella e allunga il boom per sostenere tutti gli elementi. optimize cerca entro questi limiti."),
+    "--directors": (
+        "Number of passive directors placed in front of the front element (0 to 5; NEC tags 31-35). They are treated like the reflectors: one continuous tube each, lengths pre-calculated between 0.80 and 1.00 times the resonant dipole length of the tube, spacings between the electrical/mechanical minimum and 0.40 lambda, and the boom grows to hold them. Directors raise the gain and change the input impedance a lot; re-check Zin and the matching after adding them.",
+        "Número de directores pasivos delante del elemento delantero (0 a 5; etiquetas NEC 31-35). Se tratan como los reflectores: un tubo continuo cada uno, longitudes precalculadas entre 0,80 y 1,00 veces la longitud del dipolo resonante del tubo, separaciones entre el mínimo eléctrico/mecánico y 0,40 lambda, y el boom crece para sostenerlos. Los directores aumentan la ganancia y cambian mucho la impedancia de entrada; vuelve a comprobar Zin y la adaptación después de añadirlos.",
+        "Numero di direttori passivi davanti all'elemento anteriore (da 0 a 5; tag NEC 31-35). Sono trattati come i riflettori: un tubo continuo ciascuno, lunghezze precalcolate tra 0,80 e 1,00 volte la lunghezza del dipolo risonante del tubo, spaziature tra il minimo elettrico/meccanico e 0,40 lambda, e il boom si allunga per sostenerli. I direttori aumentano il guadagno e cambiano molto l'impedenza d'ingresso; ricontrolla Zin e l'adattamento dopo averli aggiunti."),
+    "--reflector-lengths": (
+        "Lengths of the reflectors as factors of the resonant dipole length of the parasitic tube, separated by commas (one value per reflector, e.g. 1.05,1.06). Missing values use the nominal 1.05. In generate this is the length used; in optimize it is the starting point of the search, which stays between 1.00 and 1.15.",
+        "Longitudes de los reflectores como factores de la longitud del dipolo resonante del tubo parásito, separadas por comas (un valor por reflector, p. ej. 1.05,1.06). Los valores que falten usan el nominal 1,05. En generate es la longitud usada; en optimize es el punto de partida de la búsqueda, que se mantiene entre 1,00 y 1,15.",
+        "Lunghezze dei riflettori come fattori della lunghezza del dipolo risonante del tubo parassita, separate da virgole (un valore per riflettore, es. 1.05,1.06). I valori mancanti usano il nominale 1,05. In generate è la lunghezza usata; in optimize è il punto di partenza della ricerca, che resta tra 1,00 e 1,15."),
+    "--reflector-spacings": (
+        "Spacing of each reflector in wavelengths, measured from the previous element: the first from the rear element, the second from the first reflector. Comma-separated, e.g. 0.15,0.20 (the nominal values). The minimum is the larger of 0.05 lambda and the tube radii plus the clamp gap (--min-gap-mm); the maximum is 0.40 lambda.",
+        "Separación de cada reflector en longitudes de onda, medida desde el elemento anterior: el primero desde el elemento trasero, el segundo desde el primer reflector. Separadas por comas, p. ej. 0.15,0.20 (los valores nominales). El mínimo es el mayor entre 0,05 lambda y los radios de los tubos más el hueco de la abrazadera (--min-gap-mm); el máximo es 0,40 lambda.",
+        "Spaziatura di ogni riflettore in lunghezze d'onda, misurata dall'elemento precedente: il primo dall'elemento posteriore, il secondo dal primo riflettore. Separate da virgole, es. 0.15,0.20 (i valori nominali). Il minimo è il maggiore tra 0,05 lambda e i raggi dei tubi più lo spazio del morsetto (--min-gap-mm); il massimo è 0,40 lambda."),
+    "--director-lengths": (
+        "Lengths of the directors as factors of the resonant dipole length of the parasitic tube, comma-separated (one per director). Missing values use the nominal 0.96, 0.95, 0.94, 0.93, 0.92. In generate this is the length used; in optimize the starting point of a search limited to 0.80..1.00 (a director must not be longer than resonance).",
+        "Longitudes de los directores como factores de la longitud del dipolo resonante del tubo parásito, separadas por comas (una por director). Los valores que falten usan los nominales 0,96, 0,95, 0,94, 0,93, 0,92. En generate es la longitud usada; en optimize el punto de partida de una búsqueda limitada a 0,80..1,00 (un director no debe ser más largo que la resonancia).",
+        "Lunghezze dei direttori come fattori della lunghezza del dipolo risonante del tubo parassita, separate da virgole (una per direttore). I valori mancanti usano i nominali 0,96, 0,95, 0,94, 0,93, 0,92. In generate è la lunghezza usata; in optimize il punto di partenza di una ricerca limitata a 0,80..1,00 (un direttore non deve essere più lungo della risonanza)."),
+    "--director-spacings": (
+        "Spacing of each director in wavelengths from the previous element: the first from the front element, each next one from the director before it. Comma-separated; the nominal values are 0.15, 0.20, 0.25, 0.30, 0.30. Limits as for the reflectors (0.05 lambda or the mechanical minimum, up to 0.40 lambda).",
+        "Separación de cada director en longitudes de onda desde el elemento anterior: el primero desde el elemento delantero, cada uno de los siguientes desde el director anterior. Separadas por comas; los valores nominales son 0,15, 0,20, 0,25, 0,30, 0,30. Límites como en los reflectores (0,05 lambda o el mínimo mecánico, hasta 0,40 lambda).",
+        "Spaziatura di ogni direttore in lunghezze d'onda dall'elemento precedente: il primo dall'elemento anteriore, ciascuno dei successivi dal direttore precedente. Separate da virgole; i valori nominali sono 0,15, 0,20, 0,25, 0,30, 0,30. Limiti come per i riflettori (0,05 lambda o il minimo meccanico, fino a 0,40 lambda)."),
+    "--parasitic-diameter": (
+        "Tube diameter in mm of all reflectors and directors. Empty: the element diameter at the start of the run. The resonant length that the length factors refer to depends on it. optimize snaps it to the nearest purchasable diameter (--diameter-values) but never moves it during the refinement.",
+        "Diámetro en mm del tubo de todos los reflectores y directores. Vacío: el diámetro de los elementos al comienzo de la ejecución. De él depende la longitud resonante a la que se refieren los factores de longitud. optimize lo ajusta al diámetro comercial más cercano (--diameter-values) pero nunca lo mueve durante el refinamiento.",
+        "Diametro in mm del tubo di tutti i riflettori e direttori. Vuoto: il diametro degli elementi all'inizio dell'esecuzione. Da esso dipende la lunghezza risonante a cui si riferiscono i fattori di lunghezza. optimize lo porta al diametro commerciale più vicino (--diameter-values) ma non lo muove mai durante il raffinamento."),
+    "--min-gap-mm": (
+        "Smallest surface-to-surface gap in mm between neighbouring elements, the room needed for clamps and insulators (default 20). Together with the 0.05 lambda electrical floor it sets the minimum spacing of the reflectors and directors.",
+        "Hueco mínimo en mm entre superficies de elementos vecinos, el espacio necesario para abrazaderas y aisladores (por defecto 20). Junto con el mínimo eléctrico de 0,05 lambda fija la separación mínima de reflectores y directores.",
+        "Spazio minimo in mm tra le superfici di elementi vicini, lo spazio necessario per morsetti e isolatori (predefinito 20). Insieme al minimo elettrico di 0,05 lambda fissa la spaziatura minima di riflettori e direttori."),
+    "--boom-overhang-mm": (
+        "Boom length in mm beyond the outer elements at each end (default 50). With reflectors or directors the modelled boom is the longer of --boom-length and the span of all elements plus twice this overhang; the build sheet gives the element positions from the rear end of that boom.",
+        "Longitud del boom en mm más allá de los elementos exteriores en cada extremo (por defecto 50). Con reflectores o directores el boom modelado es el mayor entre --boom-length y la distancia entre todos los elementos más dos veces este sobrante; la hoja de construcción da las posiciones de los elementos desde el extremo trasero de ese boom.",
+        "Lunghezza del boom in mm oltre gli elementi esterni a ciascuna estremità (predefinito 50). Con riflettori o direttori il boom modellato è il maggiore tra --boom-length e l'estensione di tutti gli elementi più due volte questa sporgenza; il foglio di costruzione dà le posizioni degli elementi dall'estremità posteriore di quel boom."),
+    "--tap-mm": (
+        "T-match feed: distance in mm from the element centre to each tap, the point where a stub joins the element (default 120). The same value is used on both driven elements. Larger taps raise the impedance seen at the bar centre and change the phase relation of the element currents; optimize moves the tap in 10 mm steps (and scans --tap-values in the grid). The tap must stay at least 1.5 segments from the centre and one segment from the tip.",
+        "Alimentación T-match: distancia en mm del centro del elemento a cada toma, el punto donde un brazo se une al elemento (por defecto 120). Se usa el mismo valor en los dos elementos excitados. Tomas más alejadas elevan la impedancia vista en el centro de la barra y cambian la relación de fase de las corrientes; optimize mueve la toma en pasos de 10 mm (y recorre --tap-values en la rejilla). La toma debe quedar al menos a 1,5 segmentos del centro y a un segmento de la punta.",
+        "Alimentazione T-match: distanza in mm dal centro dell'elemento a ciascuna presa, il punto in cui un braccio si unisce all'elemento (predefinito 120). Lo stesso valore vale per entrambi gli elementi alimentati. Prese più lontane alzano l'impedenza vista al centro della barra e cambiano la relazione di fase delle correnti; optimize sposta la presa a passi di 10 mm (e percorre --tap-values nella griglia). La presa deve restare almeno a 1,5 segmenti dal centro e a un segmento dalla punta."),
+    "--tap-offset-mm": (
+        "T-match feed: distance in mm from the element axis to the T-bar, on the side facing the other element (default 50). The phase line runs between the two bar centres, so a larger offset shortens the straight distance it has to span. NEC-2 loses accuracy as the bar comes closer than about 5 element diameters; check the average gain test.",
+        "Alimentación T-match: distancia en mm del eje del elemento a la barra T, del lado que mira al otro elemento (por defecto 50). La línea de fase va entre los centros de las dos barras, así que una separación mayor acorta la distancia recta que debe cubrir. NEC-2 pierde precisión cuando la barra se acerca a menos de unos 5 diámetros del elemento; comprueba la prueba de ganancia media.",
+        "Alimentazione T-match: distanza in mm dall'asse dell'elemento alla barra T, sul lato rivolto all'altro elemento (predefinito 50). La linea di fase corre tra i centri delle due barre, quindi una distanza maggiore accorcia il tratto rettilineo da coprire. NEC-2 perde precisione quando la barra si avvicina a meno di circa 5 diametri dell'elemento; controlla il test del guadagno medio."),
+    "--tap-wire-mm": (
+        "T-match feed: diameter in mm of the T-bar and its two stubs. Empty: the element diameter, which is the most accurate choice in NEC-2 (junctions of unequal radii lower the accuracy; a thin bar on a thick element can make the average gain test fail).",
+        "Alimentación T-match: diámetro en mm de la barra T y de sus dos brazos. Vacío: el diámetro del elemento, que es la opción más precisa en NEC-2 (las uniones de radios distintos reducen la precisión; una barra fina sobre un elemento grueso puede hacer fallar la prueba de ganancia media).",
+        "Alimentazione T-match: diametro in mm della barra T e dei suoi due bracci. Vuoto: il diametro dell'elemento, la scelta più precisa in NEC-2 (le giunzioni di raggi diversi riducono la precisione; una barra sottile su un elemento spesso può far fallire il test del guadagno medio)."),
+    "--max-line-deg": (
+        "Longest phase line, in electrical degrees, that generate picks and optimize scans. Empty: a line at most 1.5 times the straight distance between its ends plus --line-allowance-mm, so that it can be run almost straight; when the theoretical line is beyond 180 degrees (a crossed line fed at the rear element) the limit covers it plus the largest line offset. A line more than twice the distance it spans is reported as one that must be folded or coiled. The LC network is always 0..180 degrees.",
+        "Línea de fase más larga, en grados eléctricos, que elige generate y que recorre optimize. Vacío: una línea de como mucho 1,5 veces la distancia recta entre sus extremos más --line-allowance-mm, para que pueda tenderse casi recta; cuando la línea teórica supera 180 grados (una línea cruzada alimentada en el elemento trasero) el límite la cubre más el mayor desplazamiento de línea. Una línea de más del doble de la distancia que cubre se informa como una que debe plegarse o enrollarse. La red LC es siempre de 0..180 grados.",
+        "Linea di fase più lunga, in gradi elettrici, che generate sceglie e optimize percorre. Vuoto: una linea al massimo 1,5 volte la distanza rettilinea tra i suoi estremi più --line-allowance-mm, così da poterla stendere quasi dritta; quando la linea teorica supera 180 gradi (una linea incrociata alimentata sull'elemento posteriore) il limite la comprende più il maggiore scostamento di linea. Una linea più lunga del doppio della distanza che copre viene segnalata come da piegare o avvolgere. La rete LC è sempre 0..180 gradi."),
+    "--mast-offset-mm": (
+        "Horizontal elements: sideways offset in mm of the mast from the boom axis, along the elements (the arm of a side clamp). With 0 the mast lies in the symmetry plane of the balanced elements and the model does not excite it at all. Vertical elements: extra distance of the side-mounted mast behind the rear end of the boom.",
+        "Elementos horizontales: desplazamiento lateral en mm del mástil respecto al eje del boom, a lo largo de los elementos (el brazo de una abrazadera lateral). Con 0 el mástil queda en el plano de simetría de los elementos balanceados y el modelo no lo excita en absoluto. Elementos verticales: distancia adicional del mástil lateral detrás del extremo trasero del boom.",
+        "Elementi orizzontali: spostamento laterale in mm del palo rispetto all'asse del boom, lungo gli elementi (il braccio di un morsetto laterale). Con 0 il palo giace nel piano di simmetria degli elementi bilanciati e il modello non lo eccita affatto. Elementi verticali: distanza aggiuntiva del palo laterale dietro l'estremità posteriore del boom."),
+    "--parasitic-length-offsets": (
+        "Grid offsets added to the length factor of EVERY reflector and director at the same time, comma-separated (e.g. -0.02,0,0.02). Each value multiplies the number of grid candidates. The result is clamped to the pre-calculated limits; the refinement then tunes each element on its own. Needs --reflectors or --directors.",
+        "Desplazamientos de rejilla sumados a la vez al factor de longitud de TODOS los reflectores y directores, separados por comas (p. ej. -0.02,0,0.02). Cada valor multiplica el número de candidatos de la rejilla. El resultado se limita a los límites precalculados; después el refinamiento ajusta cada elemento por separado. Requiere --reflectors o --directors.",
+        "Scostamenti di griglia sommati contemporaneamente al fattore di lunghezza di TUTTI i riflettori e direttori, separati da virgole (es. -0.02,0,0.02). Ogni valore moltiplica il numero di candidati della griglia. Il risultato è limitato ai valori precalcolati; poi il raffinamento regola ogni elemento separatamente. Richiede --reflectors o --directors."),
+    "--parasitic-spacing-scales": (
+        "Grid multipliers applied to the spacing of EVERY reflector and director at the same time, comma-separated (e.g. 0.9,1,1.1). Each value multiplies the number of grid candidates. The result is clamped to the pre-calculated minimum and maximum spacing; the refinement then tunes each spacing on its own. Needs --reflectors or --directors.",
+        "Multiplicadores de rejilla aplicados a la vez a la separación de TODOS los reflectores y directores, separados por comas (p. ej. 0.9,1,1.1). Cada valor multiplica el número de candidatos de la rejilla. El resultado se limita a la separación mínima y máxima precalculadas; después el refinamiento ajusta cada separación por separado. Requiere --reflectors o --directors.",
+        "Moltiplicatori di griglia applicati contemporaneamente alla spaziatura di TUTTI i riflettori e direttori, separati da virgole (es. 0.9,1,1.1). Ogni valore moltiplica il numero di candidati della griglia. Il risultato è limitato alla spaziatura minima e massima precalcolate; poi il raffinamento regola ogni spaziatura separatamente. Richiede --reflectors o --directors."),
+    "--match-q-l": (
+        "With the matched score: quality factor Q of the inductor of the ideal L-network every candidate is scored through (default 150). Its ESR = X/Q is included, so the score pays the real dissipation of the network; a low Q penalizes designs whose impedance is far from the target.",
+        "Con la puntuación adaptada: factor de calidad Q de la bobina de la red en L ideal con la que se puntúa cada candidato (por defecto 150). Se incluye su ESR = X/Q, así que la puntuación paga la disipación real de la red; una Q baja penaliza los diseños cuya impedancia está lejos del objetivo.",
+        "Con il punteggio adattato: fattore di merito Q dell'induttore della rete a L ideale con cui si valuta ogni candidato (predefinito 150). È inclusa la sua ESR = X/Q, quindi il punteggio paga la dissipazione reale della rete; un Q basso penalizza i progetti la cui impedenza è lontana dall'obiettivo."),
+    "--match-q-c": (
+        "With the matched score: quality factor Q of the capacitor of the ideal L-network (default 500, a good air or PTFE trimmer). Its ESR = |X|/Q is included in the network loss of every candidate.",
+        "Con la puntuación adaptada: factor de calidad Q del condensador de la red en L ideal (por defecto 500, un buen trimmer de aire o PTFE). Su ESR = |X|/Q se incluye en la pérdida de la red de cada candidato.",
+        "Con il punteggio adattato: fattore di merito Q del condensatore della rete a L ideale (predefinito 500, un buon compensatore ad aria o in PTFE). La sua ESR = |X|/Q è inclusa nella perdita della rete di ogni candidato."),
+    "--tap-values": (
+        "T-match feed: tap distances in mm scanned by the grid, comma-separated (e.g. 100,120,140). Empty: only --tap-mm. Each value multiplies the number of grid candidates and gets its own synthesized phase line; the refinement then moves the tap of the best candidate in 10 mm steps.",
+        "Alimentación T-match: distancias de toma en mm que recorre la rejilla, separadas por comas (p. ej. 100,120,140). Vacío: solo --tap-mm. Cada valor multiplica el número de candidatos de la rejilla y tiene su propia línea de fase sintetizada; después el refinamiento mueve la toma del mejor candidato en pasos de 10 mm.",
+        "Alimentazione T-match: distanze delle prese in mm percorse dalla griglia, separate da virgole (es. 100,120,140). Vuoto: solo --tap-mm. Ogni valore moltiplica il numero di candidati della griglia e ha la propria linea di fase sintetizzata; poi il raffinamento sposta la presa del miglior candidato a passi di 10 mm."),
+})
 
 
 def opt_help(o) -> str:
@@ -1754,7 +1844,7 @@ def analyse_geometry(geom: dict) -> dict:
     tags = sorted({w["tag"] for w in wires})
     if 1 not in tags:
         raise ValueError(tr("err.no_tag1"))
-    front_tag = 2 if 2 in tags else (3 if 3 in tags else None)
+    front_tag = 2 if 2 in tags else None
     if front_tag is None:
         raise ValueError(tr("err.no_front"))
     lo1, hi1 = _tag_extent(wires, 1)
@@ -1891,18 +1981,26 @@ def beamwidth_lin(x, y, drop=3.0, circular=False):
     return None if a is None or b is None else a + b
 
 
-def find_nec2c(custom: str = ""):
-    """Path of nec2c: the GUI field (a file or a folder), the PATH, the bin folder next to this program, then a
-    nec2c.exe shipped next to this program."""
+def find_nec2c(custom: str = "", core=None):
+    """Path of nec2c in the lookup order of hb9cv.find_nec2c: the GUI field (a file or a folder), the HB9CV_NEC2C
+    environment variable, the PATH, the bin folder next to this program, then a nec2c.exe shipped next to it.
+    With core (the loaded hb9cv.py) its own lookup is used."""
     custom = (custom or "").strip()
-    if custom:
-        p = Path(custom)
+    if core is not None and hasattr(core, "find_nec2c"):
+        return core.find_nec2c(types.SimpleNamespace(nec2c=custom or None))
+    for cand in (custom, os.environ.get("HB9CV_NEC2C", "").strip()):
+        if not cand:
+            continue
+        p = Path(cand).expanduser()
         if p.is_dir():
             for n in ("nec2c", "nec2c.exe"):
-                if (p / n).exists():
+                if (p / n).is_file():
                     return str(p / n)
-        elif p.exists():
+        elif p.is_file():
             return str(p)
+        found = shutil.which(cand)
+        if found:
+            return found
     found = shutil.which("nec2c") or shutil.which("nec2c.exe")
     if found:
         return found
@@ -2043,7 +2141,11 @@ def simulate_pattern(core, nec_path: Path, freq_hint: float, step: float, exe: s
     an["sphere_avg"] = avg
     an["directivity"] = an["gmax"] - 10.0 * math.log10(avg) if avg and avg > 0 else None
     exp = 1.0 if expected_eff is None else expected_eff
-    if avg is not None and abs(avg - exp) > sphere_avg_tolerance(step):
+    if hasattr(core, "agt_needs_warning"):
+        warn_avg = core.agt_needs_warning(avg, exp, sphere_avg_tolerance(step))
+    else:
+        warn_avg = avg is not None and abs(avg - exp) > sphere_avg_tolerance(step)
+    if warn_avg:
         an["notes"].append(tr("warn.sphere_avg", a=avg, e=exp))
     return an
 
@@ -2207,9 +2309,6 @@ def draw_antenna(fig: Figure, geom: dict, an: dict | None = None, info: list[str
     tl, nt = geom["tl"], geom["nt"]
     ex = geom["ex"]
     fed_tag = tl["t1"] if tl else (nt["t1"] if nt else None)
-    for c in (tl, nt):
-        if c is None:
-            continue
     centers = {rear["tag"]: (xr, rear["center"] * mm), front["tag"]: (xf, front["center"] * mm)}
     tm = ai.get("tmatch") or {}
     for w in geom["wires"]:          # T-match stubs and bars in the element plane
@@ -2509,7 +2608,7 @@ def draw_pattern_3d(fig: Figure, an: dict, geom: dict | None = None, linear: boo
 
     if geom and geom["wires"]:   # small inset with the antenna wires
         ins = fig.add_axes([0.01, 0.03, 0.23, 0.26], projection="3d")
-        ff = 2 if any(w["tag"] == 2 for w in geom["wires"]) else 3
+        ff = 2
         allp = np.array([p for w in geom["wires"] for p in (w["p1"], w["p2"])])
         c = allp.mean(axis=0)
         span = float(np.abs(allp - c).max()) or 1.0
@@ -3246,13 +3345,41 @@ class App(ctk.CTk):
         self.grid_columnconfigure(0, weight=0)
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=0)
         left = ctk.CTkFrame(self, width=self._left_width(), fg_color="white", corner_radius=10)
-        left.grid(row=0, column=0, sticky="nsew", padx=(10, 5), pady=10)
+        left.grid(row=0, column=0, sticky="nsew", padx=(10, 5), pady=(10, 4))
         left.grid_propagate(False)
         right = ctk.CTkFrame(self, fg_color="white", corner_radius=10)
-        right.grid(row=0, column=1, sticky="nsew", padx=(5, 10), pady=10)
+        right.grid(row=0, column=1, sticky="nsew", padx=(5, 10), pady=(10, 4))
         self._build_left(left)
         self._build_right(right)
+        self._build_footer()
+
+    def _build_footer(self):
+        """Bottom line of the window: author, license and project URL (the last two open in the web browser)."""
+        foot = ctk.CTkFrame(self, fg_color="transparent")
+        foot.grid(row=1, column=0, columnspan=2, sticky="ew", padx=14, pady=(0, 6))
+        font = ctk.CTkFont(size=11)
+        link_font = ctk.CTkFont(size=11, underline=True)
+        grey, blue = "#667085", "#1f6fb2"
+        items = [(f"{APP_TITLE}  \u00b7  {tr('ui.author')}: {APP_AUTHOR}  \u00b7  \u00a9 2026", None),
+                 (f"{tr('ui.license')}: {APP_LICENSE}", APP_LICENSE_URL),
+                 (f"{tr('ui.project')}: {PROJECT_URL}", PROJECT_URL)]
+        for col, (text, url) in enumerate(items):
+            if col:
+                ctk.CTkLabel(foot, text="\u00b7", font=font, text_color=grey).grid(row=0, column=2 * col - 1, padx=6)
+            lab = ctk.CTkLabel(foot, text=text, font=link_font if url else font, text_color=blue if url else grey,
+                               cursor="hand2" if url else "")
+            lab.grid(row=0, column=2 * col, sticky="w")
+            if url:
+                lab.bind("<Button-1>", lambda _e, u=url: self._open_url(u))
+                ToolTip(lab, tr("ui.open_link"))
+
+    def _open_url(self, url):
+        try:
+            webbrowser.open(url, new=2)
+        except Exception as exc:
+            messagebox.showerror(APP_TITLE, str(exc))
 
     def _build_left(self, left):
         left.grid_columnconfigure(0, weight=1)
@@ -3656,7 +3783,7 @@ class App(ctk.CTk):
             messagebox.showerror(APP_TITLE, tr("msg.no_workdir", p=ctx["cwd"]))
             return
         if ctx["mode"] in ("generate", "optimize"):
-            exe = find_nec2c(ctx["nec2c"])
+            exe = find_nec2c(ctx["nec2c"], self.core)
             needs = ctx["mode"] == "optimize" or self.vars["--run"].get() or ctx["patterns"]
             if not exe and ctx["mode"] == "optimize":
                 messagebox.showerror(APP_TITLE, tr("msg.need_nec2c"))
@@ -3713,7 +3840,7 @@ class App(ctk.CTk):
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
-        exe = find_nec2c(ctx["nec2c"])
+        exe = find_nec2c(ctx["nec2c"], self.core)
         if exe:
             env["PATH"] = str(Path(exe).resolve().parent) + os.pathsep + env.get("PATH", "")
             if ctx["mode"] in ("generate", "optimize"):
@@ -3791,7 +3918,7 @@ class App(ctk.CTk):
         if not ctx["patterns"]:
             res["pattern_error"] = ("pat.off", {})
             return
-        exe = find_nec2c(ctx["nec2c"])
+        exe = find_nec2c(ctx["nec2c"], self.core)
         if not exe:
             res["pattern_error"] = ("pat.no_nec2c", {})
             return

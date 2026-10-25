@@ -1280,19 +1280,31 @@ def line_min_elec_deg(spacing_m, lam, vf, allowance_m=0.0):
     return 360.0 * (spacing_m + allowance_m) / (vf * lam)
 
 
+LINE_FOLD_WARN = 2.0   # a TL line longer than this many times the distance it spans has to be folded or coiled
+
+
 def line_feasibility_warnings(args, lam, spacing_m, line_elec_deg):
-    """Texts for a TL phase line physically shorter than the distance it has to span."""
+    """Texts for a TL phase line physically shorter than the distance it has to span, or so long that it has to be
+    folded or coiled."""
     if args.network != "tl":
         return []
+    out = []
     allow = (getattr(args, "line_allowance_mm", 0.0) or 0.0) / 1000.0
     need = line_min_elec_deg(spacing_m, lam, args.coax_vf, allow)
     if line_elec_deg + 1e-9 < need:
-        return [f"phase line {line_elec_deg:.1f} deg ({line_elec_deg / 360.0 * lam * args.coax_vf * 1000:.1f} mm) is "
-                f"shorter than the straight distance between the feed points"
-                + (f" plus {allow * 1000:g} mm of connections" if allow else "")
-                + f" ({need:.1f} deg, {(spacing_m + allow) * 1000:.1f} mm, needed at VF={args.coax_vf:g}): the model "
-                "cannot be built as simulated. Raise the electrical length, raise VF, or reduce the element spacing."]
-    return []
+        out.append(f"phase line {line_elec_deg:.1f} deg "
+                   f"({line_elec_deg / 360.0 * lam * args.coax_vf * 1000:.1f} mm) is "
+                   f"shorter than the straight distance between the feed points"
+                   + (f" plus {allow * 1000:g} mm of connections" if allow else "")
+                   + f" ({need:.1f} deg, {(spacing_m + allow) * 1000:.1f} mm, needed at VF={args.coax_vf:g}): the "
+                   "model cannot be built as simulated. Raise the electrical length, raise VF, or reduce the element "
+                   "spacing.")
+    phys_m = line_elec_deg / 360.0 * lam * args.coax_vf
+    if spacing_m > 0 and phys_m > LINE_FOLD_WARN * spacing_m:
+        out.append(f"phase line {phys_m * 1000:.0f} mm for {spacing_m * 1000:.0f} mm between the feed points "
+                   f"({phys_m / spacing_m:.1f} x): it has to be folded or coiled, which the ideal NEC TL does not "
+                   "model (coupling to the elements, radiation)")
+    return out
 
 
 def boom_radius(shape, size_mm):
@@ -1329,7 +1341,7 @@ def _closest_points(p1, p2, q1, q2):
     e = sum(v * v for v in d2)
     f = sum(x * y for x, y in zip(d2, r))
     if a <= 1e-18 and e <= 1e-18:
-        return math.sqrt(sum(v * v for v in r))
+        return math.sqrt(sum(v * v for v in r)), 0.0, 0.0, list(p1), list(q1)
     if a <= 1e-18:
         s, t = 0.0, min(max(f / e, 0.0), 1.0)
     else:
@@ -2077,7 +2089,8 @@ def build_deck(args):
                              "contributes 180 degrees) or use --no-crossed.")
         line_warnings += line_feasibility_warnings(args, lam, line_info["feed_distance_m"], line_elec)
         if (args.feed_element == "rear" and args.crossed and getattr(args, "phase_target_deg", None) is None
-                and getattr(args, "line_deg", None) is None and getattr(args, "coax_length", None) is None):
+                and (getattr(args, "line_deg", None) is None or getattr(args, "line_auto", False))
+                and getattr(args, "coax_length", None) is None):
             line_warnings.append(f"rear-fed crossed line needs {line_elec:.0f} electrical degrees "
                                  f"({line_elec / 360.0:.3f} lambda); --no-crossed gives "
                                  f"{line_electrical_deg(line_target, False):.0f} degrees")
@@ -2416,7 +2429,8 @@ def build_sheet_data(args, geom, line, zin=None, perf=None):
             tubes.append({"tube": i + 1, "nec_from_center_mm": a0 * 1000.0, "nec_to_mm": a1 * 1000.0,
                           "od_mm": 2000.0 * r, "cut_length_mm": (t1 - t0) * 1000.0})
         elements[name] = {"nec_length_mm": length, "feed_gap_mm": gap, "end_cap_extension_mm": cap,
-                          "half_cut_mm": half, "halves": 1 if tmatch else 2, "diameter_mm": tubes[0]["od_mm"],
+                          "half_cut_mm": half, "halves": 1 if tmatch else 2,
+                          "tube_cut_mm": length - 2.0 * cap if tmatch else None, "diameter_mm": tubes[0]["od_mm"],
                           "diameter_text": "/".join(f"{t['od_mm']:g}" for t in tubes), "sections": tubes,
                           "wall_mm": args.tube_wall_mm, "fed": args.network in ("tl", "lc") and name == feed}
     data["elements"] = elements
@@ -2429,8 +2443,8 @@ def build_sheet_data(args, geom, line, zin=None, perf=None):
                      "equal to L_nec (each extra mm of gap with the same tubes lengthens the element by 1 mm).")
     if tmatch:
         notes.append("T-match feed: each driven element is ONE continuous tube (no feed gap; it may be bolted to a "
-                     "metallic boom at its center); cut length = NEC length - 2 x e. The 'cut length of each half' "
-                     "column is the half of that tube, from the center to the tip.")
+                     "metallic boom at its center); tube cut length = NEC length - 2 x e. The 'half length' column "
+                     "is the half of that tube, from the center to the tip (for marking the center and the taps).")
     else:
         notes.append(("The feed gap is in the NEC model: a 1-segment wire of length g bridges the gap and carries the "
                       "source/line port; gap capacitance and the insulator are not modeled."
@@ -2495,7 +2509,7 @@ def build_sheet_data(args, geom, line, zin=None, perf=None):
         offset_note = (f"metallic boom below the elements, no electrical contact ({clr_mm:g} mm between the element "
                        "and boom surfaces, as modeled)")
     else:
-        offset, offset_note = None, "boom not modeled in NEC (simulate with --boom-isolated if it is metallic)"
+        offset, offset_note = None, "boom not modeled in NEC; simulate with --boom-isolated if it is metallic"
     all_x = [x_rear_m, x_front_m] + [e["x"] for e in pars]
     span_mm = (max(all_x) - min(all_x)) * 1000.0
     overhang = (boom_len_mm - span_mm) / 2.0
@@ -2590,7 +2604,7 @@ def build_sheet_data(args, geom, line, zin=None, perf=None):
              "choke_target": f"common-mode impedance >= 500-1000 ohm at {f:g} MHz (validate on the bench)",
              "reference_impedance_balanced_side_ohm": args.target_impedance, "matching": None}
     if n != 1.0:
-        match["balun_note"] = BALUN_4_1_NOTE.format(zb=50.0 / n, zu=50.0)
+        match["balun_note"] = BALUN_4_1_NOTE.format(zb=args.target_impedance, zu=args.target_impedance * n)
     if zin is not None:
         vswr = lnet_metrics(zin, args.target_impedance)[0]
         match["zin_design_freq"] = _cplx(zin)
@@ -2649,8 +2663,16 @@ def build_sheet_data(args, geom, line, zin=None, perf=None):
         boom_mat = "insulating boom/mounts (the boom is not modeled; if metallic, simulate with --boom-isolated)"
     def tube_txt(name):
         return "; ".join(f"{t['od_mm']:g} mm OD x {t['cut_length_mm']:.1f} mm" for t in elements[name]["sections"])
-    bom = [f"Element tubes ({args.tube_wall_mm:g} mm wall), 2 identical halves per element, from the center outward: "
-           f"rear {tube_txt('rear')}; front {tube_txt('front')} (cut lengths, telescopic overlaps not included)",
+    if tmatch:
+        elem_bom = (f"Element tubes ({args.tube_wall_mm:g} mm wall), ONE continuous tube per driven element (no feed "
+                    "gap): " + "; ".join(f"{name} {elements[name]['diameter_mm']:g} mm OD x "
+                                         f"{elements[name]['tube_cut_mm']:.1f} mm" for name in ("rear", "front"))
+                    + " (cut length = NEC length - 2 x end hardware)")
+    else:
+        elem_bom = (f"Element tubes ({args.tube_wall_mm:g} mm wall), 2 identical halves per element, from the center "
+                    f"outward: rear {tube_txt('rear')}; front {tube_txt('front')} (cut lengths, telescopic overlaps "
+                    "not included)")
+    bom = [elem_bom,
            *([f"Parasitic elements ({args.tube_wall_mm:g} mm wall), one continuous tube each: " + "; ".join(
                f"{q['name']} {q['diameter_mm']:g} mm OD x {q['cut_length_mm']:.1f} mm" for q in data["parasitics"])]
              if data["parasitics"] else []),
@@ -2701,8 +2723,7 @@ def build_sheet_data(args, geom, line, zin=None, perf=None):
              f"{khz_per_mm_rear:.0f} kHz (rear)",
              f"1 mm of element spacing = {deg_per_mm_spacing:.3f} deg of spacing phase (kd)"]
     if mc:
-        mc_txt = [f"Monte-Carlo ({mc.get('samples', '?')} samples; elements +-{tol.get('length_mm', '?'):g} mm, "
-                  f"spacing +-{tol.get('spacing_mm', '?'):g} mm, line +-{tol.get('line_deg', '?'):g} deg): "
+        mc_txt = [f"Monte-Carlo ({mc.get('samples', '?')} samples, {mc_dist_text(tol)}; {mc_tolerance_text(tol)}): "
                   f"10th percentile F/B sector {mc['fb_p10']:.2f} dB, 10th percentile score {mc['score_p10']:.2f}"
                   + (f", 90th percentile VSWR {mc['vswr_p90']:.2f}" if mc.get("vswr_p90") not in (None, "") else "")]
         tl_mm = tol.get("length_mm")
@@ -2750,6 +2771,21 @@ def build_sheet_data(args, geom, line, zin=None, perf=None):
     return data
 
 
+def mc_dist_text(tol):
+    """Name of the Monte-Carlo distribution recorded in the tolerances dict."""
+    return "uniform" if tol.get("dist", "uniform") == "uniform" else "normal, tolerance = 2 sigma"
+
+
+def mc_tolerance_text(tol):
+    """Text of the Monte-Carlo tolerances recorded in the tolerances dict (only the ones that applied)."""
+    parts = [f"elements +-{tol.get('length_mm', 0):g} mm", f"spacing +-{tol.get('spacing_mm', 0):g} mm",
+             f"line +-{tol.get('line_deg', 0):g} deg"]
+    parts += [f"{label} +-{tol[key]:g} {unit}" for key, label, unit in (
+        ("tap_mm", "taps", "mm"), ("bar_mm", "T-bar offsets", "mm"), ("vf_pct", "line VF", "%"),
+        ("z0_pct", "line/LC Z0", "%"), ("c_pct", "series C", "%")) if tol.get(key) is not None]
+    return ", ".join(parts)
+
+
 def _jsonable(o):
     if isinstance(o, complex):
         return _cplx(o)
@@ -2773,12 +2809,21 @@ def render_build_sheet_md(d, args):
     if d["warnings"]:
         L.append("")
     # 1
-    L += ["## 1. Elements", "",
-          "| Element | NEC length (mm) | Gap g (mm) | Cut length of each half (mm) | Tubes | OD x wall (mm) | Fed |",
-          "|---|---|---|---|---|---|---|"]
+    continuous = all(e.get("tube_cut_mm") is not None for e in d["elements"].values())
+    if continuous:
+        L += ["## 1. Elements", "",
+              "| Element | NEC length (mm) | Tube cut length (mm) | Half length, center to tip (mm) | Tubes | "
+              "OD x wall (mm) | Fed |",
+              "|---|---|---|---|---|---|---|"]
+    else:
+        L += ["## 1. Elements", "",
+              "| Element | NEC length (mm) | Gap g (mm) | Cut length of each half (mm) | Tubes | OD x wall (mm) | "
+              "Fed |",
+              "|---|---|---|---|---|---|---|"]
     for name in ("rear", "front"):
         e = d["elements"][name]
-        L.append(f"| {name} | {e['nec_length_mm']:.1f} | {e['feed_gap_mm']:g} | {e['half_cut_mm']:.1f} | {e['halves']} | "
+        second = f"{e['tube_cut_mm']:.1f}" if continuous else f"{e['feed_gap_mm']:g}"
+        L.append(f"| {name} | {e['nec_length_mm']:.1f} | {second} | {e['half_cut_mm']:.1f} | {e['halves']} | "
                  f"{e['diameter_text']} x {e['wall_mm']:g} | {'yes' if e['fed'] else 'no'} |")
     if d.get("parasitics"):
         L += ["", "### 1b. Reflectors and directors (passive)", "",
@@ -2798,7 +2843,7 @@ def render_build_sheet_md(d, args):
           f"- Element spacing (center to center): {g['spacing_center_to_center_mm']:.1f} mm "
           f"({g['spacing_lambda']:.4f} lambda)",
           "- Element-to-boom axis offset: " + (f"{off:.1f} mm" if off is not None else "n/a") + f" ({g['element_to_boom_note']})",
-          f"- Boom: {g['boom_shape']} {g['boom_size_mm']:g} mm, length {g['boom_length_mm']:g} mm; "
+          f"- Boom: {g['boom_shape']} {g['boom_size_mm']:g} mm, length {g['boom_length_mm']:.0f} mm; "
           f"overhang beyond each element: {g['boom_overhang_each_end_mm']:.1f} mm",
           f"- Element tip distance from the boom axis: rear {g['element_tip_distance_from_boom_axis_mm']['rear']:.1f} mm, "
           f"front {g['element_tip_distance_from_boom_axis_mm']['front']:.1f} mm",
@@ -2906,7 +2951,8 @@ def render_build_sheet_md(d, args):
         if ag:
             L += [f"Average gain test (free space, perfect conductors): AGT = {ag['agt']:.3f} ({ag['agt_db']:+.2f} dB)"
                   + ("; the NEC gains above are low by about that amount and the input impedance is less reliable "
-                     "(see the build sheet risks)" if abs(ag["agt_db"]) > AGT_WARN_DB else "; no correction needed")
+                     "(see the build sheet risks)" if abs(ag["agt_db"]) > AGT_WARN_DB else
+                     f"; within the {AGT_WARN_DB:g} dB limit, no correction required")
                   + ".", ""]
         mc = pf.get("mc")
         L += ["Sensitivity to mechanical tolerances (Monte-Carlo):", ""]
@@ -2918,8 +2964,7 @@ def render_build_sheet_md(d, args):
                   "| VSWR, 90th percentile | " + (f"{mc['vswr_p90']:.2f}" if mc.get("vswr_p90") not in (None, "") else "n/a") + " |"]
             tol = mc.get("tolerances")
             if tol:
-                L.append(f"| Tolerances (uniform) | elements +-{tol['length_mm']:g} mm, spacing +-{tol['spacing_mm']:g} mm, "
-                         f"line +-{tol['line_deg']:g} deg; seed {tol['seed']} |")
+                L.append(f"| Tolerances ({mc_dist_text(tol)}) | {mc_tolerance_text(tol)}; seed {tol['seed']} |")
             L.append("")
         else:
             L += ["Not run: use `--mode optimize --tolerance-mc 100` (or more) to fill this table.", ""]
@@ -3059,8 +3104,9 @@ def print_model_warnings(label, warnings, seen=None):
 
 
 def resonance_estimate(exe, gargs, rear_start=150, rear_end=210, rel_step=0.005):
-    """Frequency (MHz) where X_in crosses zero, from a straight-line fit of X_in at f*(1-rel_step), f and
-    f*(1+rel_step); None when there is no single feed point or the slope is zero."""
+    """(f_res, X_in at f, dX/df): the frequency (MHz) where X_in crosses zero, from a straight-line fit of X_in at
+    f*(1-rel_step), f and f*(1+rel_step), the input reactance (ohm) at f and the slope (ohm/MHz); None when there is
+    no single feed point or the slope is zero."""
     if gargs.network not in ("tl", "lc"):
         return None
     f0 = gargs.freq
@@ -3094,10 +3140,13 @@ def convergence_check(exe, gargs, rear_start=150, rear_end=210):
         dr = (b["zin"].real - a["zin"].real) / a["zin"].real * 100.0
         print(f"  Zin {a['zin'].real:.2f}{a['zin'].imag:+.2f}j -> {b['zin'].real:.2f}{b['zin'].imag:+.2f}j ohm "
               f"(R {dr:+.1f} %)")
+        dz_pct = abs(b["zin"] - a["zin"]) / abs(a["zin"]) * 100.0
+        print(f"  |delta Zin| = {abs(b['zin'] - a['zin']):.2f} ohm ({dz_pct:.1f} % of |Zin|)")
         out["delta_r_percent"] = dr
-        bad = bad or abs(dr) > 5.0
-    print("  WARNING: not converged (limits 0.1 dB gain, 1 dB F/B, 5 % R_in): raise --segments and re-run."
-          if bad else "  Converged within 0.1 dB gain, 1 dB F/B and 5 % R_in.")
+        out["delta_z_percent"] = dz_pct
+        bad = bad or abs(dr) > 5.0 or dz_pct > 5.0
+    print("  WARNING: not converged (limits 0.1 dB gain, 1 dB F/B, 5 % R_in, 5 % |Zin|): raise --segments and re-run."
+          if bad else "  Converged within 0.1 dB gain, 1 dB F/B, 5 % R_in and 5 % |Zin|.")
     seen = set()
     print_model_warnings(f"{n} segments", a.get("model_warnings"), seen)
     print_model_warnings(f"{2 * n + 1} segments", b.get("model_warnings"), seen)
@@ -3299,6 +3348,15 @@ def sphere_average_gain(points, step):
     return total * math.radians(step) * (2.0 * math.pi / nph) / (4.0 * math.pi)
 
 
+def agt_needs_warning(avg, expected=1.0, grid_tol=0.0):
+    """True when a sphere-averaged gain departs from the expected radiation efficiency by more than AGT_WARN_DB,
+    or by more than the integration tolerance grid_tol (linear) of the pattern grid when that is larger."""
+    if not (avg and avg > 0 and expected and expected > 0):
+        return False
+    lim_db = max(AGT_WARN_DB, 10.0 * math.log10(1.0 + max(grid_tol, 0.0)))
+    return abs(10.0 * math.log10(avg / expected)) > lim_db
+
+
 def average_gain_test(exe, gargs, step=AGT_STEP_DEG):
     """NEC average gain test: the model in free space with perfect conductors, its gain averaged over the sphere.
     A correct current solution gives 1; the departure measures the error of the input power NEC normalizes the
@@ -3324,12 +3382,15 @@ def average_gain_test(exe, gargs, step=AGT_STEP_DEG):
     db = 10.0 * math.log10(agt) if agt > 0 else -math.inf
     print(f"\nAVERAGE GAIN TEST (free space, perfect conductors, {step:g} deg sphere): AGT = {agt:.3f} "
           f"({db:+.2f} dB)")
-    if abs(db) > AGT_WARN_DB:
+    if agt_needs_warning(agt):
         print(f"  WARNING: the current solution does not conserve power: NEC gains are off by {-db:+.2f} dB and the "
               "input impedance is less reliable. Usual causes: junctions of unequal radii (--tap-wire-mm), a T-bar "
               "too close to its element (--tap-offset-mm), too few segments (--segments), very thick tubes.")
     else:
-        print(f"  Within {AGT_WARN_DB:g} dB: the reported gains need no correction (corrected = gain {-db:+.2f} dB).")
+        tm_note = ("; T-match junctions typically give about 0.2 dB in NEC-2"
+                   if getattr(gargs, "feed_style", "center") == "tmatch" and gargs.network in ("tl", "lc") else "")
+        print(f"  Within {AGT_WARN_DB:g} dB: no correction is required (the reported gains are {abs(db):.2f} dB "
+              f"{'low' if db < 0 else 'high'}{tm_note}).")
     return {"agt": agt, "agt_db": db, "step_deg": step, "corrected_gain_offset_db": -db}
 
 
@@ -3461,9 +3522,10 @@ def check_common_model_args(p, args):
             p.error(str(exc))
         if getattr(args, "fsweep", None):
             p.error("--mast-sensitivity cannot be combined with --fsweep (it needs the radiation pattern)")
-    mast_wanted = args.mast_length_m > 0 or bool(args.mast_sensitivity)
-    if mast_wanted and (args.feedline_length > 0 or args.cm_sensitivity):
-        p.error("the mast cannot be combined with --feedline-length-m / --cm-sensitivity (the two wires would "
+    # --mast-sensitivity and --cm-sensitivity simulate their own variants (the mast variants carry no shield wire);
+    # only a mast in the model itself meets the shield wire below the boom.
+    if args.mast_length_m > 0 and (args.feedline_length > 0 or args.cm_sensitivity):
+        p.error("--mast-length-m cannot be combined with --feedline-length-m / --cm-sensitivity (the two wires would "
                 "cross below the boom); run them separately")
     resolve_line_options(p, args)
     resolve_ground_options(p, args)
@@ -3537,6 +3599,7 @@ def choose_default_line(args):
                                  "fb_metric": "sector"}
                 syn = synthesize_line(exe, _variant(args, line_deg=None), lo, hi, objective=objective)
                 args.line_deg = max(round(syn["elec_deg"], 3), math.ceil(lo * 1000.0) / 1000.0)
+                args.line_auto = True
                 print(f"NOTE: phase line synthesized from the two-port response of the elements: {synthesis_text(syn)}.")
                 if syn["error"] > 0.3:
                     print("NOTE: the cardioid target is far from reach with this line impedance and geometry"
@@ -3560,6 +3623,7 @@ def choose_default_line(args):
         return                       # lc_pi_values reports the out-of-range delay
     if elec != theory:
         args.line_deg = elec
+        args.line_auto = True
 
 
 def resolve_auto_series_c(p, args):
@@ -3730,7 +3794,7 @@ def run_generate(p, args):
     if args.network == "ideal" and args.balun_ratio != "1:1":
         print("WARNING: --balun-ratio only changes the target impedance; with --network ideal there is no single port.")
     elif args.balun_ratio == "4:1":
-        print("NOTE: " + BALUN_4_1_NOTE.format(zb=args.target_impedance, zu=50.0))
+        print("NOTE: " + BALUN_4_1_NOTE.format(zb=args.target_impedance, zu=args.target_impedance * balun_n(args)))
     if args.cm_sensitivity:
         exe_cm = find_nec2c(args)
         if not exe_cm:
@@ -4063,6 +4127,9 @@ def parse_band(text):
         return [fmin]
     if not 2 <= n <= 101:
         raise argparse.ArgumentTypeError("--band requires 2 <= N <= 101 when FMIN < FMAX")
+    if (fmax - fmin) / (n - 1) <= 2.0 * freq_print_tol(fmax):
+        raise argparse.ArgumentTypeError("--band points are closer than the 5-digit frequency resolution of nec2c; "
+                                         "use fewer points or a wider band")
     return [fmin + (fmax - fmin) * i / (n - 1) for i in range(n)]
 
 
@@ -4408,8 +4475,10 @@ def synthesize_line(exe, gargs, elec_min, elec_max, td=None, objective=None):
             a = c1
     th = min((best, 0.5 * (a + b)), key=err)
     ratio, zin = line_response(resp, z0, th, gargs.crossed, gargs.feed_element)
+    cell = (hi - lo) / n
     out = {"elec_deg": th, "ratio": ratio, "zin": zin, "error": abs(ratio - target), "target": target, "z0": z0,
-           "exact": exact_line_solution(resp, target, gargs.crossed, gargs.feed_element), "range": (lo, hi)}
+           "exact": exact_line_solution(resp, target, gargs.crossed, gargs.feed_element), "range": (lo, hi),
+           "at_limit": th - lo < 0.5 * cell or hi - th < 0.5 * cell}
     if err is objective_err:
         out["pattern"] = line_pattern_metrics(resp, z0, th, gargs.crossed, gargs.feed_element,
                                               objective["rear_sector"])
@@ -4419,6 +4488,14 @@ def synthesize_line(exe, gargs, elec_min, elec_max, td=None, objective=None):
 
 def synthesis_text(syn):
     """One-line summary of a synthesize_line result."""
+    lo, hi = syn.get("range", (0.0, 0.0))
+    limit = (f" (at the limit of the allowed range {lo:.1f}..{hi:.1f} deg: the optimum lies outside it; see "
+             "--max-line-deg, --line-allowance-mm, --no-crossed or --feed-element)" if syn.get("at_limit") else "")
+    return _synthesis_body(syn) + limit
+
+
+def _synthesis_body(syn):
+    """synthesis_text without the range note."""
     r = syn["ratio"]
     txt = (f"line {syn['elec_deg']:.1f} deg at Z0 {syn['z0']:.1f} ohm gives |I_far/I_fed| = {abs(r):.3f}, phase "
            f"{math.degrees(cmath.phase(r)):+.1f} deg (target 1.000, {math.degrees(cmath.phase(syn['target'])):+.1f} "
@@ -4434,6 +4511,34 @@ def synthesis_text(syn):
     if ex:
         txt += f". The exact target needs Z0 = {ex[1]:.1f} ohm and {ex[0]:.1f} deg"
     return txt
+
+
+def line_scan_center(base, lo, hi, offsets):
+    """Centre of the line scan: the synthesized (or theoretical) line, moved up so that the lowest offset reaches the
+    shortest buildable line lo, but never above the longest allowed line hi (a narrow window keeps the synthesized
+    line itself in the scan)."""
+    shifted = lo - min(offsets)
+    if base < shifted:
+        base = min(shifted, max(base, hi))
+    return base
+
+
+def scored_frequencies(p, args):
+    """(frequencies, index of the design frequency) scored by optimize: the --band points plus --freq when it is
+    not one of them (it must lie inside the band), or --freq alone. The design frequency is always simulated, so the
+    series capacitor, the matching network and the reported design values refer to it."""
+    freqs = list(args.band_freqs or [args.freq])
+    if args.band_freqs:
+        tol_f = freq_print_tol(args.freq)
+        if not freqs[0] - tol_f <= args.freq <= freqs[-1] + tol_f:
+            p.error(f"--freq {args.freq:g} MHz lies outside --band {freqs[0]:g}..{freqs[-1]:g} MHz")
+        if all(abs(fr - args.freq) > tol_f for fr in freqs):
+            freqs = sorted(freqs + [args.freq])
+            if any(b - a <= 2.0 * freq_print_tol(b) for a, b in zip(freqs, freqs[1:])):
+                p.error("--band: --freq is closer to a band point than the 5-digit frequency resolution of nec2c")
+            print(f"NOTE: --freq {args.freq:g} MHz is not a --band point; it is added to the scored frequencies "
+                  "(the geometry, the line, the series capacitor and the matching network are designed there).")
+    return freqs, min(range(len(freqs)), key=lambda i: abs(freqs[i] - args.freq))
 
 
 def run_optimize(p, args, network_given):
@@ -4533,8 +4638,7 @@ def run_optimize(p, args, network_given):
     n_jobs = args.jobs if args.jobs else (os.cpu_count() or 1)
     if n_jobs < 1:
         p.error("--jobs must be >= 1")
-    freqs = args.band_freqs or [args.freq]
-    design_i = min(range(len(freqs)), key=lambda i: abs(freqs[i] - args.freq))
+    freqs, design_i = scored_frequencies(p, args)
     try:
         line_offsets = parse_values(args.line_offset_values, "line offset", -360, 360)
         abs_coax = parse_values(args.coax_length_values, "coaxial length", 0.001, 10.0) if args.coax_length_values else None
@@ -4625,9 +4729,13 @@ def run_optimize(p, args, network_given):
             d[sk] = tuple(round(min(max(v, L["sp_min"]), L["sp_max"]), 6) for v, L in zip(c[sk], lim))
         return d
 
-    if args.boom_isolated and n_par == 0 and args.boom_length / 1000.0 <= max(spacings) * lam:
-        p.error(f"--boom-length ({args.boom_length:g} mm) must be greater than the largest spacing "
-                f"({max(spacings) * lam * 1000:.1f} mm)")
+    # Spacing window of the refinement and the Nelder-Mead polish: 0.03..0.30 lambda, widened to hold the grid.
+    sp_lo, sp_hi = min(0.03, min(spacings)), max(0.30, max(spacings))
+    sp_reach = sp_hi if (args.refine_spacing and (args.refine or args.nm_evals)) else max(spacings)
+    if args.boom_isolated and n_par == 0 and args.boom_length / 1000.0 <= sp_reach * lam:
+        p.error(f"--boom-length ({args.boom_length:g} mm) must be greater than the largest spacing the search can "
+                f"reach ({sp_reach * lam * 1000:.1f} mm" + (", --refine-spacing" if sp_reach > max(spacings) else "")
+                + "); lengthen the boom" + (" or use --no-refine-spacing" if sp_reach > max(spacings) else ""))
 
     def phase_options(spacing):
         """Rear phases (ideal) or a single marker (tl/lc) for a spacing."""
@@ -4719,9 +4827,7 @@ def run_optimize(p, args, network_given):
                         except (ValueError, OSError) as exc:
                             print(f"NOTE: line synthesis failed at spacing {sp:g} lambda ({exc}); the scan is "
                                   "centered on the theoretical line.")
-                    if base + min(line_offsets) < lo:
-                        base = lo - min(line_offsets)
-                    line_bases[(sp, z0, tap)] = base
+                    line_bases[(sp, z0, tap)] = line_scan_center(base, lo, hi, line_offsets)
         if not quiet:
             for (sp, z0, tap), syn in sorted(line_syn.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0.0,
                                                                                kv[0][2] or 0.0)):
@@ -5160,7 +5266,8 @@ def run_optimize(p, args, network_given):
             what = ["lengths"] + (["reflector/director lengths and spacings"] if n_par else []) \
                 + (["phase"] if not single and abs_phases is None else []) \
                 + (["line"] if single and abs_coax is None else []) + (["tap"] if tmatch else []) \
-                + (["spacing"] if args.refine_spacing else []) + (["element diameter"] if args.refine_diameter else [])
+                + ([f"spacing ({sp_lo:g}..{sp_hi:g} lambda)"] if args.refine_spacing else []) \
+                + (["element diameter"] if args.refine_diameter else [])
             diam_txt = ("the next purchasable diameter" if diam_list else f"diameter {steps['diam']:g} mm")
             print(f"Local refinement: {args.refine} rounds from the best grid candidate over {', '.join(what)} "
                   f"(initial steps: lengths {steps['len']:g}, angles {steps['ang']:g} deg, spacing {steps['sp']:g} "
@@ -5212,7 +5319,7 @@ def run_optimize(p, args, network_given):
                                 continue
                         elif key == "spacing":
                             c["spacing"] = round(cur["spacing"] + sign * step, 6)
-                            if not 0.03 <= c["spacing"] <= 0.30:
+                            if not sp_lo <= c["spacing"] <= sp_hi:
                                 continue
                             if single and not line_valid(c["spacing"], cur["line_elec"]):
                                 continue                  # the line no longer spans the new spacing
@@ -5260,7 +5367,7 @@ def run_optimize(p, args, network_given):
                     c[k] = round(v, 2) if k == "diam" else round(v, 6)
                 if not (0.5 <= c["rear"] <= 1.5 and 0.5 <= c["front"] <= 1.5):
                     return None
-                if args.refine_spacing and not 0.03 <= c["spacing"] <= 0.30:
+                if args.refine_spacing and not sp_lo <= c["spacing"] <= sp_hi:
                     return None
                 if args.refine_diameter and not d_min - 1e-9 <= c["diam"] <= d_max + 1e-9:
                     return None
@@ -5592,11 +5699,9 @@ def run_optimize(p, args, network_given):
         phys_mm = best["line_length_m"] * 1000.0
         print(f"Phase line: {phys_mm:.1f} mm for {dist_mm:.1f} mm between the feed points (slack {phys_mm - dist_mm:.1f} "
               f"mm for the connections and the crossing; --line-allowance-mm {args.line_allowance_mm:g}).")
-        if phys_mm > 2.0 * dist_mm:
-            print(f"WARNING: the phase line is {phys_mm / dist_mm:.1f} times the distance it spans: it has to be folded "
-                  "or coiled, which the ideal NEC TL does not model (coupling to the elements, radiation). Lower "
-                  "--max-line-deg" + (" or widen --tap-values" if tmatch else " or use --feed-style tmatch")
-                  + " for a straight line.")
+        if phys_mm > LINE_FOLD_WARN * dist_mm:
+            print("NOTE: for a phase line that runs almost straight lower --max-line-deg"
+                  + (" or widen --tap-values." if tmatch else " or use --feed-style tmatch."))
     if best_layout:
         print("\nREAL DIMENSIONS TO BUILD for the reflectors/directors (tip-to-tip NEC lengths; positions measured "
               "from the rear-most element):")
@@ -5680,7 +5785,7 @@ def run_optimize(p, args, network_given):
         if best["Zin_real"] != "":
             print(f"NEC Zin of the best model at {freq:g} MHz: {best['Zin_real']:.3f}{best['Zin_imag']:+.3f}j ohm; "
                   f"VSWR vs {args.target_impedance:g} ohm = {best['VSWR_vs_target']:.2f}:1; "
-                  f"realized gain = {best['realized_gain_dB']:.2f} dB")
+                  f"realized gain = {best['realized_gain_dB']:.2f} dBi")
         try:
             res_est = resonance_estimate(exe, final_gargs(best_ev["cand"]), rear_start, rear_end)
         except (ValueError, OSError) as exc:
@@ -5712,7 +5817,7 @@ def run_optimize(p, args, network_given):
     print("WARNING: " + BALUN_REQUIREMENT.format(f=freq))
     if single:
         if args.balun_ratio == "4:1":
-            print("NOTE: " + BALUN_4_1_NOTE.format(zb=args.target_impedance, zu=50.0))
+            print("NOTE: " + BALUN_4_1_NOTE.format(zb=args.target_impedance, zu=args.target_impedance * balun_n(args)))
         if args.vswr_weight == 0:
             print("NOTE: the optimizer is not driving Zin to the target (--vswr-weight 0 = report only); a weight "
                   "above 0 (and a tight --zin-x-max) makes the search prefer designs that need little or no "
@@ -5723,6 +5828,12 @@ def run_optimize(p, args, network_given):
             print_element_currents(out_path, ports=li_best["ports"])
         except (ValueError, OSError) as exc:
             print(f"NOTE: element-current report not available: {exc}", file=sys.stderr)
+    mc_tolerances = {"dist": args.tol_dist, "length_mm": args.tol_length_mm, "spacing_mm": args.tol_spacing_mm,
+                     "line_deg": args.tol_line_deg, "seed": args.tol_seed,
+                     "tap_mm": args.tol_tap_mm if tmatch else None, "bar_mm": args.tol_bar_mm if tmatch else None,
+                     "vf_pct": args.tol_vf_pct if args.network == "tl" else None,
+                     "z0_pct": args.tol_z0_pct if single else None,
+                     "c_pct": args.tol_c_pct if args.series_c_pf is not None else None}
     loss_bs = conductor_loss_check(exe, final_gargs(best_ev["cand"]), rear_start, rear_end)
     agt_bs = average_gain_test(exe, final_gargs(best_ev["cand"]))
     conv = convergence_check(exe, final_gargs(best_ev["cand"]), rear_start, rear_end) if args.check_convergence else None
@@ -5748,8 +5859,7 @@ def run_optimize(p, args, network_given):
                           {"design": best_pf[design_i], "band": list(best_pf) if args.band_freqs else [best_pf[design_i]],
                            "mc": ({"samples": best.get("mc_samples"), "score_p10": best["score_p10"],
                                    "fb_p10": best["fb_p10"], "vswr_p90": best.get("vswr_p90"),
-                                   "tolerances": {"length_mm": args.tol_length_mm, "spacing_mm": args.tol_spacing_mm,
-                                                  "line_deg": args.tol_line_deg, "seed": args.tol_seed}}
+                                   "tolerances": mc_tolerances}
                                   if isinstance(best.get("score_p10"), float) else None),
                            "loss": loss_bs, "agt": agt_bs},
                           {"elec_deg": best["line_electrical_deg"], "phys_m": best["line_length_m"] or 0.0,
@@ -6024,7 +6134,7 @@ def run_sweep(p, args):
             vswr, rl, rho = lnet_metrics(zi, args.z0)
             mism, diss, tot = lnet_losses(z_load, w, net, args.z0)
             rows.append({
-                "frequency_MHz": f"{f_mhz:.3f}",
+                "frequency_MHz": f"{f_mhz:.6g}",
                 "network": label,
                 "topology": net["topology"],
                 "series_kind": net["series"][0],
@@ -6327,7 +6437,7 @@ def build_parser():
         help=f"nec2c executable, or the folder that holds it (default: ${NEC2C_ENV}, then the PATH)")
     opt((G, O), "--check-convergence", action="store_true",
         help="simulate the model (optimize: the best model) with --segments n and 2n+1 and report the change of "
-             "gain, F/B and R_in (warns above 0.1 dB, 1 dB, 5 %%); needs nec2c")
+             "gain, F/B and Zin (warns above 0.1 dB of gain, 1 dB of F/B, 5 %% of R_in or 5 %% of |Zin|); needs nec2c")
     opt((G, O), "--robustness", action="store_true",
         help="one table of the change in gain, F/B and Zin caused by a metallic boom (when not modeled), a mast "
              f"placed where it breaks the symmetry of the elements (horizontal: 1 m on a {ROBUST_MAST_OFFSET_MM:g} mm "
@@ -6474,7 +6584,9 @@ def build_parser():
     opt((O,), "--band", default=None, metavar="FMIN,FMAX,N",
         help="score every candidate at N evenly spaced frequencies (e.g. 144,146,5) with one deck per candidate "
              "and keep the WORST case: min over f of the objective term, minus --vswr-weight*(max VSWR - 1). "
-             "--freq (default: band center) fixes the geometry and the line length. Without --band: single frequency")
+             "--freq (default: band center) fixes the geometry and the line length; it must lie inside the band and is "
+             "always one of the scored frequencies (added when it is not a band point). Without --band: single "
+             "frequency")
     opt((O,), "--tolerance-mc", type=int, default=0, metavar="N",
         help="after the grid/refine, simulate the same N random perturbations (common random numbers) on each of "
              "the top --tol-top-k candidates and rank them by the 10th percentile score, with a bootstrap interval; "

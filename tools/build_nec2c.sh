@@ -17,14 +17,25 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Usage: build_nec2c.sh [DEST_DIR]
+# Usage: build_nec2c.sh [--mingw] [DEST_DIR]
 #
 # Downloads the nec2c source (https://github.com/KJ7LNW/nec2c, GPL-3.0, tag NEC2C_VERSION, default v1.3.3),
 # compiles it with gcc and copies the executable to DEST_DIR (default: the bin folder next to this tools
 # folder, where hb9cv.py and hb9cv_gui.py look for it). Works on Linux and in the MSYS environment of MSYS2
 # on Windows; there it also copies the MSYS runtime DLLs the executable needs, so nec2c.exe runs from a
 # normal Windows program. Needs gcc, tar and curl, wget or git.
+#
+# --mingw: cross-compiles a self-contained Windows nec2c.exe (no runtime DLLs) on Linux with
+# x86_64-w64-mingw32-gcc (Debian/Ubuntu/Mint: sudo apt install gcc-mingw-w64-x86-64; Fedora: sudo dnf install
+# mingw64-gcc). The POSIX calls nec2c uses that MinGW lacks (times, sysconf, sigaction) come from the shim
+# tools/mingw-compat/sys/times.h. This is how the nec2c.exe in the project folder is built.
 set -euo pipefail
+
+MINGW=no
+if [ "${1:-}" = "--mingw" ]; then
+    MINGW=yes
+    shift
+fi
 
 VERSION="${NEC2C_VERSION:-v1.3.3}"
 URL="https://github.com/KJ7LNW/nec2c/archive/refs/tags/${VERSION}.tar.gz"
@@ -38,13 +49,21 @@ DEST="$(cd "$DEST" && pwd)"
 
 die() { echo "build_nec2c: $*" >&2; exit 1; }
 
-command -v gcc >/dev/null 2>&1 || die "gcc not found (Debian/Ubuntu/Mint: sudo apt install gcc; Fedora: sudo dnf install gcc; MSYS2: pacman -S gcc)"
+if [ "$MINGW" = yes ]; then
+    CC=x86_64-w64-mingw32-gcc
+    command -v "$CC" >/dev/null 2>&1 || die "$CC not found (Debian/Ubuntu/Mint: sudo apt install gcc-mingw-w64-x86-64; Fedora: sudo dnf install mingw64-gcc)"
+    EXE=nec2c.exe
+    CFLAGS_EXTRA="-static -Wl,--no-insert-timestamp -I$HERE/mingw-compat"
+else
+    CC=gcc
+    command -v gcc >/dev/null 2>&1 || die "gcc not found (Debian/Ubuntu/Mint: sudo apt install gcc; Fedora: sudo dnf install gcc; MSYS2: pacman -S gcc)"
+    EXE=nec2c
+    CFLAGS_EXTRA=""
+    case "$(uname -s)" in
+        MSYS*|MINGW*|CYGWIN*) EXE=nec2c.exe ;;
+    esac
+fi
 command -v tar >/dev/null 2>&1 || die "tar not found"
-
-EXE=nec2c
-case "$(uname -s)" in
-    MSYS*|MINGW*|CYGWIN*) EXE=nec2c.exe ;;
-esac
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -75,10 +94,14 @@ for f in $SOURCES; do
 done
 echo "build_nec2c: compiling"
 # shellcheck disable=SC2086
-gcc -O2 -DPACKAGE_STRING="\"nec2c ${VERSION#v}\"" -o "$EXE" $SOURCES -lm
+$CC -O2 $CFLAGS_EXTRA -DPACKAGE_STRING="\"nec2c ${VERSION#v}\"" -o "$EXE" $SOURCES -lm
 
 mkdir -p "$DEST"
 cp -f "$EXE" "$DEST/"
+if [ "$MINGW" = yes ]; then
+    echo "build_nec2c: cross-compiled $DEST/$EXE (Windows executable, not run here)"
+    exit 0
+fi
 if [ "$EXE" = nec2c.exe ] && command -v ldd >/dev/null 2>&1; then
     # MSYS executables need the MSYS runtime (msys-2.0.dll and friends) next to them.
     ldd "$DEST/$EXE" | awk '$3 ~ /^\/usr\/bin\// {print $3}' | while read -r dll; do

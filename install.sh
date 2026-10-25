@@ -153,7 +153,9 @@ info "Python: $PY ($("$PY" -c 'import sys; print(sys.version.split()[0])'))"
 info "Installing HB9CV Studio in $PREFIX"
 mkdir -p "$PREFIX"
 for f in hb9cv.py hb9cv_gui.py requirements.txt LICENSE NOTICE-nec2c.txt README.md install.sh uninstall.sh; do
-    [ -f "$SRC/$f" ] && cp -f "$SRC/$f" "$PREFIX/"
+    [ -f "$SRC/$f" ] || continue
+    [ "$(realpath "$SRC/$f")" = "$(realpath -m "$PREFIX/$f")" ] && continue   # running the installed copy
+    cp -f "$SRC/$f" "$PREFIX/"
 done
 for d in assets docs tools; do
     if [ -d "$SRC/$d" ] && [ "$(realpath "$SRC/$d")" != "$(realpath -m "$PREFIX/$d")" ]; then
@@ -217,7 +219,7 @@ GenericName=HB9CV antenna designer
 Comment=Design, simulate, optimize and match HB9CV antennas with nec2c
 Comment[es]=Diseña, simula, optimiza y adapta antenas HB9CV con nec2c
 Comment[it]=Progetta, simula, ottimizza e adatta antenne HB9CV con nec2c
-Exec=$BIN_DIR/hb9cv-studio
+Exec="$BIN_DIR/hb9cv-studio"
 Icon=$APP_ID
 Terminal=false
 Categories=Science;Engineering;Network;HamRadio;

@@ -42,13 +42,17 @@ It comes in two parts:
   elevation.
 - Input impedance, VSWR, and 2:1 bandwidth from a frequency sweep.
 - Quality checks: average-gain test, NEC power-budget check (unphysical runs are rejected), segmentation
-  convergence, wire-clearance check, and thin-wire rule warnings.
+  convergence (gain, F/B, R_in and |Zin|), wire-clearance check, thin-wire rule warnings, and warnings for phasing
+  lines that cannot be built straight (too short, folded, or a synthesized line at the limit of its range).
+  T-match models typically show an average gain of about 0.95 (gains about 0.2 dB low): a known NEC-2 limit at
+  thick-wire junctions, reported but within the 0.5 dB tolerance.
 - Sensitivity studies: metal boom, mast, mast length, height sweep, and common-mode current on the feed line.
 
 **Optimization**
 - Grid search, then local refinement, then a Nelder–Mead polish over spacing, element lengths, line length and
   Z0, T-match taps, tube diameter and parasitic elements.
-- Objectives: `front-back`, `gain` or `balance`, scored at the worst frequency of a band.
+- Objectives: `front-back`, `gain` or `balance`, scored at the worst frequency of a band. The design frequency
+  (`--freq`) must lie inside the band and is always one of the scored frequencies.
 - Optional scoring through an L-network built from components with finite Q.
 - An impedance window for Rin and |Xin|. If no candidate meets it, the closest one is still written.
 - Monte-Carlo tolerance analysis that re-ranks candidates by their 10th-percentile score, to favour designs that
@@ -70,6 +74,7 @@ It comes in two parts:
 - Live command preview and log, a Stop button, and presets.
 - Antenna drawing to scale, polar and rectangular pattern cuts, and an interactive 3D pattern.
 - L-network schematic, plus VSWR and impedance plots.
+- Author, license and project link (clickable) at the bottom of the window.
 - English, Spanish and Italian interface; scales for high-DPI screens (Ctrl + / Ctrl − / Ctrl 0).
 
 | Radiation pattern | 3D pattern |
@@ -103,7 +108,7 @@ Tested distributions: **Fedora**, **Debian**, **Ubuntu** and **Linux Mint** (and
 ### With the installer (recommended)
 
 ```bash
-git clone https://github.com/<user>/<repo>.git hb9cv-studio
+git clone https://github.com/hiperiondev/hb9cv_studio.git hb9cv-studio
 cd hb9cv-studio
 ./install.sh
 ```
@@ -209,7 +214,8 @@ hb9cv --mode generate --run -o first.nec
 2. Nothing to do for nec2c: the `nec2c.exe` in the project folder is found automatically. To use a different one,
    write its path in the **nec2c** field of the window. To rebuild it from source, install MSYS2; then, in the
    *MSYS2 MSYS* terminal in the project folder, run `pacman -S --needed gcc tar curl git` and
-   `bash tools/build_nec2c.sh bin`.
+   `bash tools/build_nec2c.sh bin`. The shipped `nec2c.exe` itself is cross-compiled on Linux with
+   `bash tools/build_nec2c.sh --mingw .` (self-contained, no runtime DLLs; see `NOTICE-nec2c.txt`).
 3. In a terminal opened in the project folder:
 
 ```bat
@@ -302,7 +308,8 @@ python3 hb9cv.py --mode generate --reflectors 1 --directors 2 --run -o yagi.nec
 python3 hb9cv.py --mode generate --robustness --check-convergence -o check.nec
 ```
 
-> A value that starts with a minus sign must be joined with `=`, for example `--line-offset-values=-10,0,10`.
+> The comma-list options accept a leading minus sign in both forms, `--line-offset-values -10,0,10` and
+> `--line-offset-values=-10,0,10`. For any other option whose value starts with a minus sign, use the `=` form.
 
 ## Output files
 
@@ -369,7 +376,8 @@ nec2c.exe                 nec2c for Windows (GPL-3.0, see NOTICE-nec2c.txt), ins
 NOTICE-nec2c.txt          origin, license and source of nec2c.exe
 install.bat, install.ps1  Windows installer (install.bat runs install.ps1)
 uninstall.bat, uninstall.ps1  Windows uninstaller
-tools/build_nec2c.sh      downloads and compiles nec2c (Linux, or MSYS2 on Windows)
+tools/build_nec2c.sh      downloads and compiles nec2c (Linux, MSYS2 on Windows, or --mingw for nec2c.exe)
+tools/mingw-compat/       POSIX shim used by the MinGW build of nec2c.exe
 assets/                   application icon (PNG, ICO)
 tests/test_hb9cv.py       regression tests (pytest)
 docs/manual/              user manuals (EN / ES / IT, PDF)

@@ -32,6 +32,26 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+function Set-UserPathEntry([string]$Dir, [bool]$Present) {
+    # Adds or removes $Dir in the user PATH. The raw registry value is read and written back as REG_EXPAND_SZ, so
+    # entries such as %USERPROFILE%\bin keep their variables; nothing is written when the value does not change.
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+    try {
+        $raw = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        $parts = @($raw.Split(';') | Where-Object { $_ -ne '' -and $_ -ne $Dir })
+        if ($Present) { $parts = @($parts) + $Dir }
+        $new = ($parts -join ';')
+        if ($new -eq $raw) { return $false }
+        $key.SetValue('Path', $new, [Microsoft.Win32.RegistryValueKind]::ExpandString)
+    } finally {
+        $key.Close()
+    }
+    # Setting and clearing a user variable through .NET broadcasts WM_SETTINGCHANGE, so new terminals see the PATH.
+    [Environment]::SetEnvironmentVariable('HB9CV_PATH_REFRESH', '1', 'User')
+    [Environment]::SetEnvironmentVariable('HB9CV_PATH_REFRESH', $null, 'User')
+    return $true
+}
+
 if (-not (Test-Path (Join-Path $InstallDir 'hb9cv_gui.py'))) {
     Write-Host "HB9CV Studio is not installed in $InstallDir"
     exit 0
@@ -46,10 +66,8 @@ if (Test-Path $menu) { Remove-Item $menu -Recurse -Force }
 $desk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'HB9CV Studio.lnk'
 if (Test-Path $desk) { Remove-Item $desk -Force }
 
-$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-if ($userPath) {
-    $parts = @($userPath.Split(';') | Where-Object { $_ -ne '' -and $_ -ne $InstallDir })
-    [Environment]::SetEnvironmentVariable('Path', ($parts -join ';'), 'User')
+if (Set-UserPathEntry $InstallDir $false) {
+    Write-Host 'Removed the installation folder from the user PATH.'
 }
 
 # This script may live inside the folder it removes: leave the folder first.

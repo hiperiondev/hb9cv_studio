@@ -188,3 +188,83 @@ def test_find_nec2c_uses_exe_next_to_program(tmp_path, monkeypatch):
     monkeypatch.setattr(h.shutil, "which", lambda name: None)
     monkeypatch.delenv(h.NEC2C_ENV, raising=False)
     assert h.find_nec2c() == (str(exe) if h.os.name == "nt" else None)
+
+
+def optimize_args(*extra):
+    """Arguments of an optimize run as the command line parses them (no validation)."""
+    p, _ = h.build_parser()
+    a = p.parse_args(["--mode", "optimize", *extra])
+    a.band_freqs = h.parse_band(a.band) if a.band else None
+    if a.freq is None:
+        a.freq = 0.5 * (a.band_freqs[0] + a.band_freqs[-1]) if a.band_freqs else 145.0
+    return p, a
+
+
+def test_band_includes_design_freq():
+    p, a = optimize_args("--band", "144,146,4")
+    with contextlib.redirect_stdout(io.StringIO()):
+        freqs, i = h.scored_frequencies(p, a)
+    assert len(freqs) == 5 and freqs[i] == 145.0
+    p, a = optimize_args("--band", "144,146,3")
+    freqs, i = h.scored_frequencies(p, a)
+    assert freqs == [144.0, 145.0, 146.0] and i == 1
+
+
+def test_band_rejects_freq_outside():
+    p, a = optimize_args("--band", "144,146,3", "--freq", "150")
+    with contextlib.redirect_stderr(io.StringIO()), pytest.raises(SystemExit):
+        h.scored_frequencies(p, a)
+
+
+def test_band_points_closer_than_print_resolution():
+    with pytest.raises(Exception):
+        h.parse_band("145,145.004,2")
+
+
+def test_build_sheet_tmatch_single_tube():
+    a = model()
+    data = h.build_sheet_data(a, {"rear_mm": 1034.5, "front_mm": 958.6, "spacing_mm": 258.4}, {})
+    assert "2 identical halves" not in data["bill_of_materials"][0]
+    assert "ONE continuous tube" in data["bill_of_materials"][0]
+    c = model("--feed-style", "center")
+    data = h.build_sheet_data(c, {"rear_mm": 1034.5, "front_mm": 958.6, "spacing_mm": 258.4}, {})
+    assert "2 identical halves" in data["bill_of_materials"][0]
+
+
+def test_agt_warning_threshold():
+    assert not h.agt_needs_warning(0.947, 0.997, 0.03)
+    assert h.agt_needs_warning(0.80, 1.0, 0.03)
+    assert not h.agt_needs_warning(None, 1.0, 0.03)
+
+
+def test_rear_fed_default_line_warns():
+    a = model("--feed-element", "rear")
+    a.line_deg, a.line_auto = 315.0, True
+    warns = h.build_deck(a)[5]["line_warnings"]
+    assert any("rear-fed crossed line" in w for w in warns)
+    assert any("folded or coiled" in w for w in warns)
+
+
+def test_line_scan_center():
+    offs = [-20.0, -10.0, 0.0, 10.0, 20.0]
+    assert h.line_scan_center(34.7, 23.1, 34.7, offs) == 34.7
+    assert abs(h.line_scan_center(40.0, 23.1, 200.0, offs) - 43.1) < 1e-9
+    assert h.line_scan_center(60.0, 23.1, 200.0, offs) == 60.0
+
+
+def test_degenerate_segment_distance():
+    assert h._segment_distance((0, 0, 0), (0, 0, 0), (1, 0, 0), (1, 0, 0)) == 1.0
+    assert h._surface_gap((0, 0, 0), (0, 0, 0), 0.001, (1, 0, 0), (1, 0, 0), 0.001) > 0.99
+
+
+def test_mast_and_cm_sensitivity_together():
+    p, _ = h.build_parser()
+    a = p.parse_args(["--mode", "generate", "--no-synthesize-line", "--cm-sensitivity", "--mast-sensitivity", "1"])
+    a.freq, a.band_freqs, a._argv = 145.0, None, []
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        h.check_common_model_args(p, a)
+    a = p.parse_args(["--mode", "generate", "--no-synthesize-line", "--cm-sensitivity", "--mast-length-m", "1"])
+    a.freq, a.band_freqs, a._argv = 145.0, None, []
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()), \
+            pytest.raises(SystemExit):
+        h.check_common_model_args(p, a)
