@@ -74,7 +74,7 @@ Reflectors and directors (generate / optimize):
 - --reflectors N (0..2) adds passive reflectors behind the rear element and --directors N (0..5) passive
   directors in front of the front element (tags 21-22 and 31-35, one continuous tube each, same plane, no source).
   For every one of them the program PRE-CALCULATES a minimum / nominal / maximum length (factors of the
-  resonant dipole length of the tube: reflectors 1.00..1.15, directors 0.80..1.00) and a minimum / nominal /
+  resonant dipole length of the tube: reflectors 1.00..1.15, directors 0.80..0.99) and a minimum / nominal /
   maximum spacing from the previous element (minimum = the larger of 0.05 lambda and tube radii + --min-gap-mm,
   maximum 0.40 lambda), prints them as a table, and lengthens the boom automatically to hold every element
   plus --boom-overhang-mm at each end.
@@ -100,19 +100,22 @@ Model notes (generate / optimize):
   cardioid relation with a short straight line; the T-match transforms the element impedances so that they can.
 - --series-c-pf PF|auto: the series capacitor between the feed line and the fed port (the HB9CV trimmer). It is
   written as a comment card (HB9CV_SERIES_C_PF=... HB9CV_SERIES_C_Q=...) and added, with its ESR = |X|/Q
-  (--series-c-q, default 500), to every Zin read from the .out file (generate, optimize, match, sweep, GUI); auto
-  cancels X_in at --freq (per candidate in optimize).
+  (--series-c-q, default 500), to every Zin read from the .out file (generate, optimize, match, sweep, GUI); the
+  power the ESR dissipates is subtracted from the gains (generate, optimize); auto cancels X_in at --freq (per
+  candidate in optimize).
 - Phase line (--synthesize-line, default on): two probe runs (1 V on one feed port, no network) give the port and
-  element-current responses of the driven elements; the line length is chosen so that the far/fed element-current
-  ratio is closest to the cardioid target (equal amplitudes, rear leading by 180 - kd), and the free-Z0 exact
-  solution is reported. With reflectors/directors in free space the two-element target does not hold: the line
-  that maximizes the objective on the horizon ring, computed by superposing the two probe patterns, is chosen
-  instead. generate uses it as the default line; optimize centers the line scan of every spacing, Z0 and tap on
-  it, and synthesizes it again for the pre-tuned front length. Without it the cardioid theory below is used. A TL line is never shorter than the straight distance
-  between its ends plus --line-allowance-mm (default 20 mm open-wire, 40 mm coax) and, by default, never longer than
-  1.5 times that distance (--max-line-deg); line lengths never wrap around 360 degrees.
+  element-current responses and the far fields of the driven elements; superposing the two probe patterns gives
+  the exact pattern of the antenna with any line, and the line length that maximizes the objective (--objective;
+  optimize: with --fb-metric, --rear-sector and --w-gain/--w-fb) is chosen: on the horizon ring in free space, on
+  the ring at the take-off angle over ground. The ratio of the element-centre currents to the point-source cardioid
+  (equal amplitudes, rear leading by 180 - kd) is reported as a diagnostic: with unequal elements and T-matches it
+  is not the F/B optimum. generate uses the synthesized line as the default line; optimize centers the line scan of
+  every spacing, Z0 and tap on it, and synthesizes it again for the pre-tuned front length. Without it the cardioid
+  theory below is used. A TL line is never shorter than the straight distance between its ends plus
+  --line-allowance-mm (default 20 mm open-wire, 40 mm coax) and, by default, never longer than 1.5 times that
+  distance (--max-line-deg); line lengths never wrap around 360 degrees.
   --line-type openwire (default): balanced air line, crossed by construction (keep
-  --crossed), VF 0.95; Z0 is NOT typed in: Z0 = 120*acosh(D/d) ohm from
+  --crossed), VF 0.95; Z0 is NOT typed in: Z0 = 119.9*acosh(D/d) ohm from
   --line-wire-diameter d and --line-spacing D (air, exact for two round wires).
   --line-type coax: a coax cannot be crossed, so the line is always straight (delay
   225 deg for the classic front-fed HB9CV), VF 0.66, Z0 from --line-z0; a coax phasing
@@ -152,9 +155,11 @@ Model notes (generate / optimize):
   center outward, the last section runs to the tip) model telescoped tubes as consecutive GW cards of the same tag
   (a central wire with an odd segment count holds the source). Every model is checked for the thin-wire rules
   (segment >= 2 radii, <= lambda/10, neighbouring radius <= 2:1 and segment length <= 5:1); problems are printed
-  as warnings. The deck uses NEC-2's thin-wire kernel (--extended-kernel adds the EK card), and every run must have
-  a physical power budget (positive radiated power, efficiency <= 100.5 %); a run that does not is discarded as a
-  numerically unstable model.
+  as warnings. --kernel auto (default) writes the extended thin-wire kernel card (EK) when any wire has segments
+  shorter than 8 wire radii (thick tubes, T-match junctions), where the plain thin-wire kernel loses accuracy and
+  the input impedance does not converge with the segmentation; --kernel thin / extended force one. Every run must
+  have a physical power budget (positive radiated power, efficiency <= 100.5 %); a run that does not is discarded
+  as a numerically unstable model.
 - Feed gap: --feed-gap-mm g (older name --gap-mm) goes into the cut list: half = (L_nec - g)/2 - e, the gap being
   inside the tip-to-tip NEC length. --model-feed-gap also models it: halves from +-g/2 to the tips and a 1-segment wire
   of length g that carries EX/TL; the bridge must be at least 4 tube radii and lambda/200 long (not combined with
@@ -170,7 +175,8 @@ Model notes (generate / optimize):
 - Mast (--mast-length-m, tag 12): horizontal elements: below the boom center, moved sideways by --mast-offset-mm
   (on the axis it lies in the symmetry plane of the balanced elements and is not excited); vertical elements: a
   side mount parallel to the elements behind the rear end of the boom.
-- Checks (need nec2c): --check-convergence (segments n vs 2n+1), --robustness (metallic boom, a mast placed where it
+- Checks (need nec2c): --check-convergence (segments n vs 2n+1; on by default in optimize, where |delta Zin| is
+  reported as the Zin uncertainty), --robustness (metallic boom, a mast placed where it
   breaks the symmetry and an unchoked coax shield, each alone; rows the symmetric model cannot excite are marked),
   generate --height-sweep MIN,MAX,N (over ground). The element-current report gives
   |I_rear/I_front| and the phase difference at the feed ports. --json-out FILE writes the main results as JSON.
@@ -181,18 +187,20 @@ Phase theory (elements at x=-d/2 rear and x=+d/2 front, beam toward +x):
   for d=0.125 lambda). With the classic HB9CV the front element is fed and a CROSSED
   line of kd electrical degrees (45 degrees) carries the signal to the rear one:
   delay 180 + 45 = 225 = lead of 135 degrees. In NEC a crossed TL line is indicated
-  with a negative Z0. Mutual coupling shifts these values, which is why the line is
-  synthesized from the element responses (--synthesize-line) and the optimizer sweeps
-  around that line.
+  with a negative Z0. Mutual coupling, the unequal element lengths and the T-matches shift
+  these values, which is why the line is synthesized from the superposed element patterns
+  (--synthesize-line) and the optimizer sweeps around that line.
 
 L-network (match / sweep modes):
-  Topology A (R < Z0): series branch on the antenna side, shunt branch on the Z0 side.
-  Topology B (R >= Z0): shunt branch on the antenna side, series branch on the Z0 side.
+  Topology A (exists for R < Z0): series branch on the antenna side, shunt branch on the Z0 side.
+  Topology B (exists for R^2 + X^2 >= R*Z0, always for R >= Z0): shunt branch on the antenna
+  side, series branch on the Z0 side. For R < Z0 with a large |X| both exist.
   Each branch is an inductor (jwL) or a capacitor (1/(jwC)) depending on the sign of
   the required reactance at the design frequency; a negative value is never used.
   Each topology has two solutions (positive and negative root); --lnet-solution picks one
-  (plus = positive root by default; minus; lowpass / highpass by branch kinds; best by the
-  worst VSWR over the sweep) and the other is printed. The VSWR <= 2 bandwidth is the
+  (plus / minus = positive / negative root of topology A for R < Z0, of B otherwise; lowpass /
+  highpass by branch kinds and best by the worst VSWR over the sweep, among the solutions of
+  both topologies) and the others are printed. The VSWR <= 2 bandwidth is the
   contiguous band around the best point. The self-resonance of every component is
   checked against the band (--esl-nh, --coil-cp-pf).
   Neither mode changes or simulates the NEC model; the calculated components are a
@@ -596,10 +604,14 @@ def parse_pattern_sections(text):
 
 
 
-def ring_from_section(section, theta):
-    """(phi -> total gain dB for the valid points of the ring at theta, number of rows of that ring)."""
+def ring_from_section(section, theta, az_step=None):
+    """(phi -> total gain dB for the valid points of the ring at theta, number of rows of that ring). With az_step
+    only the azimuths of that grid are taken, so the points of other pattern requests at the same theta (the rear
+    half-sphere grid) never enter the ring."""
     pts, phis = {}, set()
     for (th, ph), vals in section["points"].items():
+        if az_step and abs(ph / az_step - round(ph / az_step)) > 1e-6:
+            continue
         if abs(th - theta) <= 0.006:
             phis.add(ph)
             if vals[2] > -900:
@@ -712,7 +724,7 @@ def add_cone_metrics(m, section, rear_start=150, rear_end=210):
     return m
 
 
-def parse_metrics(path, theta=None, rear_start=150, rear_end=210, section=0, ground_free=True):
+def parse_metrics(path, theta=None, rear_start=150, rear_end=210, section=0, ground_free=True, az_step=None):
     """Pattern metrics of the azimuth ring at zenith angle theta of a nec2c .out file.
 
     theta=None: the azimuth ring of the table (the theta with the most points; the ring at 90 degrees in
@@ -741,7 +753,7 @@ def parse_metrics(path, theta=None, rear_start=150, rear_end=210, section=0, gro
         if len(ring) != 1:
             raise ValueError("the pattern table has several azimuth rings; pass theta=")
         theta = ring[0]
-    points, n_expected = ring_from_section(sec, theta)
+    points, n_expected = ring_from_section(sec, theta, az_step)
     return add_cone_metrics(ring_metrics(points, n_expected, theta, rear_start, rear_end, ground_free), sec,
                             rear_start, rear_end)
 
@@ -831,7 +843,7 @@ def segment_current(rows, tag, seg_in_tag=None):
     raise ValueError(f"segment {seg_in_tag} of tag {tag} not found in CURRENTS AND LOCATION table")
 
 
-def print_element_currents(path, ports=None, freq_section=0):
+def print_element_currents(path, ports=None, freq_section=0, spacing_factor=0.125):
     """Print |I_rear / I_front| and the phase difference of the currents at the feed ports.
 
     ports: {"rear": (tag, seg_in_tag), "front": (tag, seg_in_tag)} as returned by build_deck in
@@ -850,9 +862,10 @@ def print_element_currents(path, ports=None, freq_section=0):
         where = f"tag {tag}" + (f", segment {seg}" if seg is not None else "")
         print(f"  {name:<5s} ({where}): {i_x.real:+.5e}{i_x.imag:+.5e}j A  "
               f"(|I| = {abs(i_x):.5e}; phase = {math.degrees(math.atan2(i_x.imag, i_x.real)):+.1f} deg)")
-    print(f"  |I_rear / I_front| = {ratio:.4f}  (cardioid ideal: 1.000)")
-    print(f"  phase(rear) - phase(front) = {phase_diff:+.1f} deg  (cardioid ideal: 180 - kd, +135 deg for "
-          "0.125 lambda spacing; mutual coupling shifts the optimum)")
+    print(f"  |I_rear / I_front| = {ratio:.4f}  (point-source cardioid: 1.000)")
+    print(f"  phase(rear) - phase(front) = {phase_diff:+.1f} deg  (point-source cardioid: 180 - kd = "
+          f"{180.0 - 360.0 * spacing_factor:+.1f} deg for {spacing_factor:g} lambda spacing; element lengths, the "
+          "T-match and mutual coupling shift the F/B optimum)")
     return ratio, phase_diff
 
 
@@ -971,25 +984,33 @@ def lnet_design(z, z0, w):
 
 
 def lnet_design_all(z, z0, w):
-    """Both L-networks that match z to z0 at w, same topology rule as lnet_design: the solution with the
-    positive root first (the one lnet_design returns), then the one with the negative root."""
+    """Every L-network that matches z to z0 at w. Topology A (series branch on the antenna side) exists when R < Z0,
+    topology B (shunt branch on the antenna side) when G = Re(1/z) <= 1/Z0, i.e. R^2 + X^2 >= R Z0; for R < Z0 with a
+    large |X| both exist. The solutions of the topology lnet_design uses come first (positive root, then negative
+    root; marked primary=True), then those of the other topology; each carries its root ('plus' / 'minus')."""
     if z.real <= 0 or z0 <= 0:
         raise ValueError("R > 0 and Z0 > 0 are required")
-    sols = []
+    by_topo = {}
     if z.real < z0:
         q = math.sqrt(z0 / z.real - 1)
-        for sgn in (+1, -1):
-            sols.append({"topology": "A", "series": series_from_x(sgn * q * z.real - z.imag, w),
-                         "shunt": shunt_from_b(sgn * q / z0, w)})
-    else:
-        y = 1 / z
-        g, b = y.real, y.imag
+        by_topo["A"] = [{"topology": "A", "series": series_from_x(sgn * q * z.real - z.imag, w),
+                         "shunt": shunt_from_b(sgn * q / z0, w), "root": root}
+                        for sgn, root in ((+1, "plus"), (-1, "minus"))]
+    y = 1 / z
+    g, b = y.real, y.imag
+    if 0 < g <= 1 / z0 + EPS:
         bt = math.sqrt(max(g * (1 / z0 - g), 0.0))
-        for sgn in (+1, -1):
-            sols.append({"topology": "B", "series": series_from_x(sgn * bt * z0 / g if g > 0 else 0.0, w),
-                         "shunt": shunt_from_b(sgn * bt - b, w)})
-    if sols[0]["series"] == sols[1]["series"] and sols[0]["shunt"] == sols[1]["shunt"]:
-        sols = sols[:1]
+        by_topo["B"] = [{"topology": "B", "series": series_from_x(sgn * bt * z0 / g, w),
+                         "shunt": shunt_from_b(sgn * bt - b, w), "root": root}
+                        for sgn, root in ((+1, "plus"), (-1, "minus"))]
+    primary = "A" if z.real < z0 else "B"
+    sols = []
+    for topo in (primary, "B" if primary == "A" else "A"):
+        for sol in by_topo.get(topo, []):
+            sol["primary"] = topo == primary
+            if not any(sol["topology"] == u["topology"] and sol["series"] == u["series"]
+                       and sol["shunt"] == u["shunt"] for u in sols):
+                sols.append(sol)
     return sols
 
 
@@ -1000,22 +1021,23 @@ def lnet_kind_text(net):
 
 
 def lnet_select(z, z0, w, which="plus", table=None):
-    """L-network chosen by --lnet-solution: 'plus' = positive root (lnet_design), 'minus' = negative root,
-    'lowpass' / 'highpass' = the solution whose branch kinds are series L + shunt C / series C + shunt L (the plus /
-    minus root when no solution has them), 'best' = the lower worst VSWR over table [(f_mhz, z_load)] when it has
-    two or more points, otherwise the smaller spread between the series and shunt reactances.
-    Returns (network, all solutions)."""
+    """L-network chosen by --lnet-solution: 'plus' / 'minus' = positive / negative root of the topology lnet_design
+    uses (A for R < Z0, B otherwise), 'lowpass' / 'highpass' = a solution whose branch kinds are series L + shunt C /
+    series C + shunt L, of either topology (the plus / minus root when no solution has them), 'best' = the lowest
+    worst VSWR over table [(f_mhz, z_load)] among all solutions of both topologies when it has two or more points,
+    otherwise the smallest spread between the series and shunt reactances. Returns (network, all solutions)."""
     sols = lnet_design_all(z, z0, w)
+    prim = [s_ for s_ in sols if s_["primary"]]
     if which in ("lowpass", "highpass"):
         want = "low-pass" if which == "lowpass" else "high-pass"
-        match = [s for s in sols if lnet_kind_text(s) == want]
+        match = [s_ for s_ in sols if lnet_kind_text(s_) == want]
         if match:
             return match[0], sols
         which = "plus" if which == "lowpass" else "minus"
-    if which == "minus" and len(sols) > 1:
-        return sols[1], sols
+    if which == "minus":
+        return next((s_ for s_ in prim if s_["root"] == "minus"), prim[0]), sols
     if which != "best" or len(sols) == 1:
-        return sols[0], sols
+        return prim[0], sols
 
     def worst_vswr(net):
         return max(lnet_metrics(lnet_zin(zl, 2 * math.pi * f * 1e6, net), z0)[0] for f, zl in table)
@@ -1090,12 +1112,20 @@ def lnet_losses(z_load, w, net, z0):
     return mism, diss, mism + diss
 
 
+RL_MATCH_RHO = 1e-6   # |Gamma| below this is reported as a perfect match (return loss shown as infinite)
+
+
+def rl_text(rl):
+    """Return loss for printing: '> 120 dB' for a perfect match."""
+    return f"{rl:.2f} dB" if math.isfinite(rl) else "> 120 dB (perfect match)"
+
+
 def lnet_metrics(z_in, z0):
     """Return (VSWR, return loss in dB, |Gamma|)."""
     gamma = (z_in - z0) / (z_in + z0)
     rho = abs(gamma)
     vswr = (1 + rho) / (1 - rho) if rho < 1 else float("inf")
-    rl = -20 * math.log10(rho) if rho > 0 else float("inf")
+    rl = -20 * math.log10(rho) if rho > RL_MATCH_RHO else float("inf")
     return vswr, rl, rho
 
 
@@ -1201,6 +1231,33 @@ def series_c_for_x(x_ohm, freq_mhz):
     if not x_ohm > 0:
         return None
     return 1e12 / (2 * math.pi * freq_mhz * 1e6 * x_ohm)
+
+
+def series_c_loss_db(zin, zin_port):
+    """Gain change (dB, <= 0) caused by the ESR of the series feed capacitor: the NEC gain is referred to the power
+    accepted at the port, the capacitor dissipates ESR / (R_port + ESR) of the power that enters it. zin includes the
+    capacitor, zin_port is the NEC port impedance."""
+    if zin is None or zin_port is None or zin_port.real <= 0:
+        return 0.0
+    esr = (zin - zin_port).real
+    return 10.0 * math.log10(zin_port.real / (zin_port.real + esr)) if esr > 0 else 0.0
+
+
+GAIN_KEYS = ("forward_gain", "rear_gain", "worst_rear_gain", "max_gain", "cone_rear_gain")
+
+
+def apply_gain_offset(m, db):
+    """Add db to every gain of a parse_metrics()/ring_metrics() dict (the F/B ratios are unchanged)."""
+    if not db:
+        m.setdefault("series_c_loss_db", 0.0)
+        return m
+    for key in GAIN_KEYS:
+        if m.get(key) is not None:
+            m[key] += db
+    if m.get("gain_dbd") is not None:
+        m["gain_dbd"] += db
+    m["series_c_loss_db"] = -db
+    return m
 
 
 def feed_distance_m(args, spacing_m):
@@ -1320,6 +1377,17 @@ def boom_segments(length, seg_target, radius=0.0, lam=None):
     if lam:
         n = max(n, int(math.ceil(length / (lam / 10.0) - 1e-9)))
     return max(1, n)
+
+
+EK_AUTO_RATIO = 8.0     # --kernel auto: extended kernel when a segment is shorter than this many wire radii
+
+
+def resolve_kernel(args):
+    """NEC-2 kernel mode of a model: --kernel auto|thin|extended (--extended-kernel = extended)."""
+    k = getattr(args, "kernel", None)
+    if k:
+        return k
+    return "extended" if getattr(args, "extended_kernel", False) else "auto"
 
 
 IDEAL_DRIVE_X = 1.0e6                # ohm: series reactance that turns an EX voltage source into a current source
@@ -1470,7 +1538,8 @@ def wire_chain_warnings(name, chain, lam):
         elif seg < 4.0 * r:
             out.append(f"{lbl}, wire {i + 1}: diameter {2 * r * 1000:.1f} mm is large relative to the "
                        f"segment length {seg * 1000:.1f} mm (segment < 4 radii): the thin-wire kernel loses accuracy, "
-                       "mostly at junctions and bends; check the average gain test")
+                       "mostly at junctions and bends (--kernel auto uses the extended kernel); check the average gain "
+                       "test")
         if seg < lam / 200.0:
             out.append(f"{lbl}, wire {i + 1}: segment {seg * 1000:.1f} mm is shorter than lambda/200 "
                        f"({lam / 200.0 * 1000:.1f} mm): reduce --segments")
@@ -1507,7 +1576,7 @@ DIRECTOR_NOMINAL_SP = (0.15, 0.20, 0.25, 0.30, 0.30)
 # Hard limits used as the optimizer's bounds. A reflector must be inductive (not shorter than resonance), a
 # director capacitive (not longer than resonance); beyond the lower director bound the element no longer couples.
 REFLECTOR_LEN_RANGE = (1.00, 1.15)
-DIRECTOR_LEN_RANGE = (0.80, 1.00)
+DIRECTOR_LEN_RANGE = (0.80, 0.99)
 PAR_MIN_SPACING_LAMBDA = 0.05  # electrical floor: closer than this the coupling is too tight and the bandwidth collapses
 PAR_MAX_SPACING_LAMBDA = 0.40  # beyond this the element no longer shapes the pattern
 DEFAULT_MIN_GAP_MM = 20.0      # surface-to-surface room for the element clamps / insulators
@@ -1515,13 +1584,13 @@ DEFAULT_BOOM_OVERHANG_MM = 50.0
 
 
 def resonant_length_m(freq_mhz, diam_mm):
-    """Tip-to-tip length (m) of a free-space half-wave dipole resonant at freq_mhz, made of a tube of diam_mm.
-    Empirical end-effect factor K = 0.97 at d/lambda = 1e-3 falling to 0.945 at 1e-2 (clamped to d/lambda in
-    5e-4..3e-2): a starting value for the optimizer, which refines it with NEC."""
+    """Tip-to-tip length (m) of a free-space half-wave dipole resonant (X = 0) at freq_mhz, made of a tube of diam_mm.
+    K = L / (lambda/2) is fitted to NEC-2 thin-wire results: K = 0.75606 - 0.11000 u - 0.014373 u^2 with
+    u = log10(d/lambda), within 0.11 % for 2e-4 <= d/lambda <= 1.5e-2 (d/lambda is clamped to that range); a
+    starting value for the optimizer, which refines it with NEC."""
     lam = C_LIGHT / (freq_mhz * 1e6)
-    ratio = min(max(diam_mm / 1000.0 / lam, 5e-4), 3e-2)
-    k = 0.945 + 0.025 * (-math.log10(ratio) - 2.0)
-    return 0.5 * lam * k
+    u = math.log10(min(max(diam_mm / 1000.0 / lam, 2e-4), 1.5e-2))
+    return 0.5 * lam * (0.75606 - 0.11000 * u - 0.014373 * u * u)
 
 
 def parasitic_limits(role, freq_mhz, par_diam_mm, prev_diam_mm, min_gap_mm):
@@ -1729,6 +1798,7 @@ def build_deck(args):
     zc = (height + half_max) if vertical else height
     z_low = []
     all_wires = []
+    seg_ratios = []             # segment length / wire radius of every wire (kernel choice)
     # Offset of a modeled boom axis from the element plane: the element (or T-bar) and boom surfaces are
     # --boom-clearance-mm apart. Every conductor routed below the elements uses the same reference.
     zb = -(rad + boom_rad + clr)
@@ -1739,6 +1809,7 @@ def build_deck(args):
     def gw(tag, nseg, p1, p2, radius):
         z_low.append(min(p1[2], p2[2]) - radius)
         all_wires.append((tag, p1, p2, radius))
+        seg_ratios.append(math.dist(p1, p2) / nseg / radius)
         coords = " ".join(f"{v:.8f}" for v in (*p1, *p2))
         return f"GW {tag} {nseg} {coords} {radius:.8f}"
 
@@ -2047,10 +2118,16 @@ def build_deck(args):
         lines.insert(lines.index("CE"), f"CM Mast: {mast_len:g} m x {2000 * mr:g} mm diameter {where}; no galvanic "
                                         "junction.")
 
-    # Thin-wire kernel by default. The extended thin-wire kernel (EK, --extended-kernel) only helps on thick straight
-    # wires and NEC-2 turns it off at junctions; with T-match junctions and short segments it can make the current
-    # solution unstable (negative radiated power), while the results where it is stable differ by about 1 ohm.
-    kernel = ["EK"] if getattr(args, "extended_kernel", False) else []
+    # NEC-2 kernel (--kernel): the thin-wire kernel is accurate for segments longer than about EK_AUTO_RATIO wire
+    # radii; below that the extended thin-wire kernel (EK) keeps the current solution accurate and makes the input
+    # impedance converge with the segmentation. auto picks EK when any wire has shorter segments.
+    kmode = resolve_kernel(args)
+    use_ek = kmode == "extended" or (kmode == "auto" and min(seg_ratios) < EK_AUTO_RATIO)
+    kernel = ["EK"] if use_ek else []
+    line_info["kernel"] = "extended" if use_ek else "thin"
+    lines.insert(lines.index("CE"), "CM NEC kernel: " + (
+        f"extended thin-wire (EK; shortest segment {min(seg_ratios):.1f} wire radii)" if use_ek
+        else f"thin-wire (shortest segment {min(seg_ratios):.1f} wire radii)"))
     names = {1: "rear element", 2: "front element", TAG_TMATCH_REAR: "rear T-match", TAG_TMATCH_FRONT: "front T-match",
              5: "boom", 7: "boom bond", 10: "shield drop", 11: "shield wire", 12: "mast"}
     names.update({e["tag"]: e["name"] for e in par})
@@ -2237,15 +2314,18 @@ OPENWIRE_MIN_RATIO = 1.2      # D/d below this leaves almost no air between the 
 OPENWIRE_PROXIMITY_RATIO = 3.0  # D/d below this: proximity effect and spacer dielectric shift Z0 and VF
 
 
+ETA0_OVER_PI = 376.730313668 / math.pi   # ohm: (free-space wave impedance) / pi = 119.917 ohm
+
+
 def openwire_z0(wire_mm, spacing_mm):
-    """Z0 (ohm) of a balanced air line of two round wires (diameter d, center spacing D): 120*acosh(D/d), exact
-    for round wires in air (it reduces to 276*log10(2D/d) for D >> d)."""
-    return 120.0 * math.acosh(spacing_mm / wire_mm)
+    """Z0 (ohm) of a balanced air line of two round wires (diameter d, center spacing D): (eta0/pi)*acosh(D/d) with
+    eta0/pi = 119.917 ohm, exact for round wires in air (it reduces to 276*log10(2D/d) for D >> d)."""
+    return ETA0_OVER_PI * math.acosh(spacing_mm / wire_mm)
 
 
 def openwire_spacing_mm(z0, wire_mm):
     """Inverse of openwire_z0: center spacing D (mm) that gives z0 with wires of diameter d."""
-    return wire_mm * math.cosh(z0 / 120.0)
+    return wire_mm * math.cosh(z0 / ETA0_OVER_PI)
 
 
 def openwire_ratio_warning(wire_mm, spacing_mm):
@@ -2354,7 +2434,7 @@ def describe_line(args, elec_deg, phys_m, z0, spacing_mm, lc_l_nh, lc_c_pf):
                f"(NEC TL card length = {phys_m / args.coax_vf:.4f} m)"]
         if args.line_type == "openwire" and spacing_mm is not None:
             out.append(f"Wire diameter d = {args.line_wire_diameter:g} mm; center spacing D = {spacing_mm:.2f} mm "
-                       "(Z0 = 120*acosh(D/d))")
+                       "(Z0 = 119.9*acosh(D/d))")
         if args.line_type == "coax":
             out.append("A coax phasing section needs a balun/choke at its element end (the NEC TL does not model it).")
         return out
@@ -2566,9 +2646,10 @@ def build_sheet_data(args, geom, line, zin=None, perf=None):
         if tmatch:
             att = [a.replace("half of the", "T-bar end of the") for a in att]
         pl["attachments"] = att
-        pl["physical_length_note"] = ("measured along the line between the two " + ("T-bar centers" if tmatch else
-                                      "element feed points") + ", with the line's own VF applied; slack = physical "
-                                      "length - straight distance between them")
+        pl["physical_length_note"] = ("total conductor length measured along the line between the two "
+                                      + ("T-bar centers" if tmatch else "element feed points") + ", connections and "
+                                      "crossing included, with the line's own VF applied; slack = physical length - "
+                                      "straight distance between them (already inside the physical length)")
     elif args.network == "lc":
         pl.update({"type": "lumped LC pi network (ideal)", "crossed": bool(args.crossed), "electrical_deg": elec,
                    "series_l_nh": line.get("lc_l_nh"), "shunt_c_pf_each_port": line.get("lc_c_pf"),
@@ -2612,17 +2693,19 @@ def build_sheet_data(args, geom, line, zin=None, perf=None):
         if geom.get("match_net"):
             net = geom["match_net"]
             match["matching"] = {"topology": lnet_topology_text(net), "series": lnet_describe(net["series"]),
-                                 "shunt": lnet_describe(net["shunt"]),
-                                 "note": "ideal values of the L-network the optimizer scored the design with; build "
-                                         "it on the balanced side and validate with a VNA (see --mode match "
-                                         "--balanced)"}
+                                 "shunt": lnet_describe(net["shunt"]), "balanced": lnet_balanced_lines(net),
+                                 "note": "ideal values of the L-network the optimizer scored the design with "
+                                         "(single-ended values; on the balanced side split the series branch "
+                                         "between the two legs as listed); validate with a VNA"}
         elif vswr > 1.5:
             try:
                 net = lnet_design(zin, args.target_impedance, 2 * math.pi * f * 1e6)
                 match["matching"] = {"topology": lnet_topology_text(net),
                                      "series": lnet_describe(net["series"]), "shunt": lnet_describe(net["shunt"]),
-                                     "note": "ideal single-frequency L-network on the balanced side; validate "
-                                             "with a VNA (see --mode match --balanced)"}
+                                     "balanced": lnet_balanced_lines(net),
+                                     "note": "ideal single-frequency L-network (single-ended values; on the "
+                                             "balanced side split the series branch between the two legs as "
+                                             "listed); validate with a VNA"}
             except ValueError as exc:
                 match["matching_error"] = str(exc)
         else:
@@ -2636,9 +2719,11 @@ def build_sheet_data(args, geom, line, zin=None, perf=None):
     q_c = series_c_q(args)
     not_inc = ["loss of the balun / common-mode choke and of the feed line and connectors",
                "radiation and coupling of the phasing line (ideal NEC TL/NT network)"]
-    if c_pf:
-        not_inc.insert(0, f"(the series capacitor is included with Q = {q_c:g})" if q_c > 0 else
-                       "loss of the series capacitor (modeled lossless: --series-c-q 0)")
+    if c_pf and q_c <= 0:
+        not_inc.insert(0, "loss of the series capacitor (modeled lossless: --series-c-q 0)")
+    if c_pf and q_c > 0:
+        data["performance_notes"] = [f"The series capacitor is included with Q = {q_c:g}: its ESR is in Zin and its "
+                                     "dissipation is subtracted from the gains."]
     if args.network == "tl":
         a_db = getattr(args, "line_loss_db_per_m", 0.0) or 0.0
         phys = line.get("phys_m") or 0.0
@@ -2691,10 +2776,13 @@ def build_sheet_data(args, geom, line, zin=None, perf=None):
                    "voltage), between the feed line and the bar of the fed element")
     if args.network == "tl" and args.line_type == "openwire":
         bom.append(f"Phasing line: 2 wires of {args.line_wire_diameter:g} mm, spacing {line.get('spacing_mm') or 0:.1f} mm, "
-                   f"{(phys or 0) * 1000:.0f} mm long between feed points (+ margin for the connections), insulating spacers")
+                   f"{(phys or 0) * 1000:.0f} mm total conductor length per wire, terminal to terminal, INCLUDING the "
+                   "connections and the crossing (do not add margin: extra length changes the phase), insulating "
+                   "spacers")
     elif args.network == "tl":
         bom.append(f"Phasing line: coax Z0 = {line.get('z0') or args.coax_z0:g} ohm, VF {args.coax_vf:g}, "
-                   f"{(phys or 0) * 1000:.0f} mm between feed points, plus a choke at its element end")
+                   f"{(phys or 0) * 1000:.0f} mm total electrical path terminal to terminal, INCLUDING connectors and "
+                   "pigtails (do not add margin), plus a choke at its element end")
     elif args.network == "lc":
         bom.append("LC pi network components (values above), low-loss VHF parts, in a weatherproof enclosure")
     bom += ["Feed connector suitable for the coax used (impedance: 50 ohm system)",
@@ -2899,6 +2987,7 @@ def render_build_sheet_md(d, args):
     m = fd.get("matching")
     if m:
         L += [f"- Matching (topology {m['topology']}): series {m['series']}, shunt {m['shunt']}", f"  - {m['note']}"]
+        L += [f"  - Balanced form: {b}" for b in m.get("balanced", [])]
     elif fd.get("matching_note"):
         L.append(f"- Matching: {fd['matching_note']}")
     elif fd.get("matching_error"):
@@ -2940,6 +3029,9 @@ def render_build_sheet_md(d, args):
                          f"{v('takeoff_deg', '{:g}')} | "
                          f"{_fz(x.get('zin'))} | {v('vswr', '{:.2f}')} |")
             L.append("")
+        if convergence_note(pf.get("convergence")):
+            L += [f"{convergence_note(pf['convergence'])}; the series capacitor, the taps and the matching network are "
+                  "set on the bench (tuning procedure).", ""]
         ls = pf.get("loss")
         if ls:
             L += [f"Conductor loss (sigma = {ls['conductivity_S_m']:.3g} S/m, skin depth {ls['skin_depth_um']:.1f} um): "
@@ -2968,6 +3060,7 @@ def render_build_sheet_md(d, args):
             L.append("")
         else:
             L += ["Not run: use `--mode optimize --tolerance-mc 100` (or more) to fill this table.", ""]
+    L += [f"{n}" for n in d.get("performance_notes", [])] + ([""] if d.get("performance_notes") else [])
     L += ["Not included in the figures above: " + "; ".join(d.get("not_included", [])) + ".", ""]
     # 6
     L += ["## 6. Tuning procedure", ""] + [f"{i}. {s}" for i, s in enumerate(d["tuning_procedure"], 1)] + [""]
@@ -3013,7 +3106,7 @@ def cm_sensitivity(exe, gargs, test_len, rear_start=150, rear_end=210):
     m0, m1 = res
     z0, z1 = m0["zin"], m1["zin"]
     print(f"\nCOMMON-MODE SENSITIVITY (open-ended shield wire of {test_len:g} m, no choke; rear sector "
-          f"{rear_start}..{rear_end} deg)")
+          f"{rear_start:g}..{rear_end:g} deg)")
     print(f"{'':28s}{'without':>12s}{'with wire':>12s}{'delta':>10s}")
     for label, key in (("gain at phi=0 (dB)", "forward_gain"), ("F/B at phi=180 (dB)", "fb"),
                        ("F/B rear sector (dB)", "robust_fb")):
@@ -3053,7 +3146,7 @@ def mast_sensitivity(exe, gargs, lengths, rear_start=150, rear_end=210):
                  + (f", {gargs.mast_offset_mm:g} mm to the side of the boom axis" if gargs.mast_offset_mm else
                     " on the boom axis (the symmetry plane of the elements)"))
     print(f"\nMAST SENSITIVITY (mast {gargs.mast_diameter_mm:g} mm diameter, {where}, no galvanic junction; rear "
-          f"sector {rear_start}..{rear_end} deg)")
+          f"sector {rear_start:g}..{rear_end:g} deg)")
     head = f"{'mast length (m)':>16s}{'gain dBi':>10s}{'dGain':>8s}{'F/B':>8s}{'dF/B':>8s}{'F/B sect':>10s}{'dSect':>8s}"
     if zb is not None:
         head += f"{'Zin (ohm)':>20s}{'|dZin|':>9s}"
@@ -3100,7 +3193,7 @@ def print_model_warnings(label, warnings, seen=None):
     seen.update(new_notes)
     if new_notes:
         print(f"  NOTE ({label}): {len(new_notes)} wire(s) with segments shorter than 4 radii (reduced thin-wire "
-              "accuracy; check the average gain test)")
+              "accuracy, covered by the extended kernel with --kernel auto; check the average gain test)")
 
 
 def resonance_estimate(exe, gargs, rear_start=150, rear_end=210, rel_step=0.005):
@@ -3134,7 +3227,8 @@ def convergence_check(exe, gargs, rear_start=150, rear_end=210):
     print(f"\nSEGMENTATION CONVERGENCE at {gargs.freq:g} MHz ({n} vs {2 * n + 1} segments per element)")
     print(f"  gain {a['forward_gain']:.3f} -> {b['forward_gain']:.3f} dBi (delta {dg:+.3f} dB); "
           f"F/B sector {a['robust_fb']:.2f} -> {b['robust_fb']:.2f} dB (delta {dfb:+.2f} dB)")
-    bad = abs(dg) > 0.1 or abs(dfb) > 1.0
+    failed = ([f"gain {dg:+.2f} dB"] if abs(dg) > 0.1 else []) + ([f"F/B sector {dfb:+.2f} dB"] if abs(dfb) > 1.0
+                                                                   else [])
     out = {"segments": [n, 2 * n + 1], "delta_gain_dB": dg, "delta_fb_sector_dB": dfb}
     if a["zin"] is not None and b["zin"] is not None:
         dr = (b["zin"].real - a["zin"].real) / a["zin"].real * 100.0
@@ -3144,14 +3238,28 @@ def convergence_check(exe, gargs, rear_start=150, rear_end=210):
         print(f"  |delta Zin| = {abs(b['zin'] - a['zin']):.2f} ohm ({dz_pct:.1f} % of |Zin|)")
         out["delta_r_percent"] = dr
         out["delta_z_percent"] = dz_pct
-        bad = bad or abs(dr) > 5.0 or dz_pct > 5.0
-    print("  WARNING: not converged (limits 0.1 dB gain, 1 dB F/B, 5 % R_in, 5 % |Zin|): raise --segments and re-run."
-          if bad else "  Converged within 0.1 dB gain, 1 dB F/B, 5 % R_in and 5 % |Zin|.")
+        out["zin_uncertainty_ohm"] = abs(b["zin"] - a["zin"])
+        failed += ([f"R_in {dr:+.1f} %"] if abs(dr) > 5.0 else []) + ([f"|Zin| {dz_pct:.1f} %"] if dz_pct > 5.0
+                                                                       else [])
+    bad = bool(failed)
+    out["failed"] = failed
+    print(f"  WARNING: not converged ({', '.join(failed)}; limits 0.1 dB gain, 1 dB F/B, 5 % R_in, 5 % |Zin|): raise "
+          "--segments and re-run." if bad else "  Converged within 0.1 dB gain, 1 dB F/B, 5 % R_in and 5 % |Zin|.")
     seen = set()
     print_model_warnings(f"{n} segments", a.get("model_warnings"), seen)
     print_model_warnings(f"{2 * n + 1} segments", b.get("model_warnings"), seen)
     out["converged"] = not bad
     return out
+
+
+def convergence_note(conv):
+    """Text of the Zin uncertainty from a convergence_check result, or None."""
+    if not conv or conv.get("zin_uncertainty_ohm") is None:
+        return None
+    return (f"Zin uncertainty from the segmentation (n vs 2n+1): +-{conv['zin_uncertainty_ohm']:.2f} ohm "
+            f"({conv['delta_z_percent']:.1f} % of |Zin|)" + ("" if conv.get("converged") else
+                                                           f"; NOT converged ({', '.join(conv.get('failed', []))}): "
+                                                           "raise --segments"))
 
 
 ROBUST_MAST_OFFSET_MM = 60.0   # side-clamp arm of the robustness mast case (horizontal elements)
@@ -3458,6 +3566,12 @@ METAL_BOOM_RE = re.compile(r"metal|alumin|steel|copper|brass|iron", re.IGNORECAS
 def check_common_model_args(p, args):
     """Validation shared by the generate and optimize modes."""
     check_parasitic_args(p, args)
+    if args.extended_kernel:
+        if args.kernel not in (None, "extended"):
+            p.error(f"--extended-kernel conflicts with --kernel {args.kernel}")
+        print("WARNING: --extended-kernel is deprecated; use --kernel extended.", file=sys.stderr)
+        args.kernel = "extended"
+    args.kernel = args.kernel or "auto"
     if args.mount == "contact":
         args.boom_isolated = True
     if not args.boom_isolated:
@@ -3535,9 +3649,10 @@ def check_common_model_args(p, args):
         p.error("--segments must be odd and >= 5")
     if args.az_step < 0.01:
         p.error("--az-step must be >= 0.01 degrees (NEC prints angles with two decimals)")
-    nsteps = 360.0 / args.az_step
+    nsteps = 180.0 / args.az_step
     if abs(nsteps - round(nsteps)) > 1e-7:
-        p.error("--az-step must divide 360 exactly; examples: 1, 0.5, 0.2, 0.1")
+        p.error("--az-step must divide 180 exactly (the ring needs the phi = 180 point); examples: 1, 0.5, 0.2, 0.1, "
+                "2, 5, 10")
     for which in ("rear", "front"):
         if getattr(args, f"{which}_sections") and getattr(args, f"{which}_diameter") is not None:
             p.error(f"--{which}-sections already gives the diameters; do not combine it with --{which}-diameter")
@@ -3593,15 +3708,12 @@ def choose_default_line(args):
         exe = find_nec2c(args)
         if exe:
             try:
-                objective = None
-                if (args.reflectors or 0) + (args.directors or 0) and args.ground == "free":
-                    objective = {"objective": args.objective, "w_gain": 1.0, "w_fb": 0.5, "rear_sector": (150, 210),
-                                 "fb_metric": "sector"}
+                objective = synthesis_objective(args.objective)
                 syn = synthesize_line(exe, _variant(args, line_deg=None), lo, hi, objective=objective)
                 args.line_deg = max(round(syn["elec_deg"], 3), math.ceil(lo * 1000.0) / 1000.0)
                 args.line_auto = True
                 print(f"NOTE: phase line synthesized from the two-port response of the elements: {synthesis_text(syn)}.")
-                if syn["error"] > 0.3:
+                if not syn.get("pattern") and syn["error"] > 0.3:
                     print("NOTE: the cardioid target is far from reach with this line impedance and geometry"
                           + (" (with a centre feed a high-impedance line needs a long, folded line)"
                              if getattr(args, "feed_style", "center") == "center" and args.network == "tl" else "")
@@ -3763,7 +3875,7 @@ def run_generate(p, args):
               f"target delay of the far element={line['line_target_lag_deg']:.1f} degrees")
         if args.line_type == "openwire":
             print(f"Open-wire line: wire d={args.line_wire_diameter:g} mm, spacing D={args.line_spacing:g} mm "
-                  f"-> Z0={args.coax_z0:.1f} ohm (120*acosh(D/d)); VF of the line={args.coax_vf:g}")
+                  f"-> Z0={args.coax_z0:.1f} ohm (119.9*acosh(D/d)); VF of the line={args.coax_vf:g}")
         else:
             print(f"Coaxial line: Z0={args.coax_z0:g} ohm; VF of the cable={args.coax_vf:g}")
         print(f"Physical line length (with the line's own VF)={line['line_length_m']:.5f} m; "
@@ -3858,6 +3970,8 @@ def run_generate(p, args):
             extra["robustness"] = robustness_check(exe_x, a_x)
         if args.height_sweep:
             extra["height_sweep"] = height_sweep(exe_x, a_x, args.height_sweep)
+    if perf is not None and extra.get("convergence"):
+        perf["convergence"] = extra["convergence"]
     if args.build_sheet:
         zin_bs = None
         if perf and perf.get("design") and perf["design"].get("zin") is not None:
@@ -4081,11 +4195,17 @@ def generate_pattern_report(args, exe, output, output_file):
             output_file = ring_deck.with_suffix(".out")
             run_nec_cli(exe, ring_deck, output_file)
             write_freq_sidecar(output_file, [args.freq])
-        m = parse_metrics(output_file, theta=theta, ground_free=args.ground == "free")
-        zin = single_source_zin(output_file)[0][1] if args.network in ("tl", "lc") else None
+        m = parse_metrics(output_file, theta=theta, ground_free=args.ground == "free",
+                          az_step=getattr(args, "az_step", None))
+        zin = None
+        if args.network in ("tl", "lc"):
+            row = parse_input_parameters(output_file)[0]
+            zin = row["z"]
+            apply_gain_offset(m, series_c_loss_db(zin, row["z_port"]))
         print_pattern_summary(m, zin, args.target_impedance if zin is not None else None, args.ground)
         try:
-            print_element_currents(output_file, ports=build_deck(args)[5].get("ports"))
+            print_element_currents(output_file, ports=build_deck(args)[5].get("ports"),
+                                   spacing_factor=args.spacing_factor)
         except (ValueError, OSError) as exc:
             print(f"  NOTE: element-current report not available: {exc}", file=sys.stderr)
         return perf_row_from_metrics(m, zin, args.target_impedance if zin is not None else None, args.freq)
@@ -4219,7 +4339,12 @@ def simulate_model(exe, td, name, gargs, freqs, rear_start=150, rear_end=210, pt
             if len(sections) != len(chunk):
                 raise ValueError(f"expected {len(chunk)} pattern sections, found {len(sections)}")
             validate_input_table(out_path)
-            zins = zin_in_order(out_path, len(chunk)) if single else [None] * len(chunk)
+            zins, zports = [None] * len(chunk), [None] * len(chunk)
+            if single:
+                rows = parse_input_parameters(out_path)
+                if len(rows) != len(chunk):
+                    raise ValueError(f"expected {len(chunk)} single-source impedance rows, found {len(rows)}")
+                zins, zports = [e["z"] for e in rows], [e["z_port"] for e in rows]
             c_auto = None
             if single and getattr(gargs, "series_c_pf", None) == "auto":
                 # The capacitor that cancels X_in at the design frequency, added to the Zin of every frequency.
@@ -4227,11 +4352,12 @@ def simulate_model(exe, td, name, gargs, freqs, rear_start=150, rear_end=210, pt
                 c_auto = series_c_for_x(zins[k0].imag, chunk[k0])
                 if c_auto:
                     zins = [z + series_c_impedance(c_auto, fr, series_c_q(gargs)) for z, fr in zip(zins, chunk)]
-            for fr, th, sec, zin in zip(chunk, thetas, sections, zins):
-                points, n_exp = ring_from_section(sec, th)
+            for fr, th, sec, zin, zport in zip(chunk, thetas, sections, zins, zports):
+                points, n_exp = ring_from_section(sec, th, getattr(gargs, "az_step", None))
                 m = add_cone_metrics(ring_metrics(points, n_exp, th, rear_start, rear_end,
                                                   ground_free=not over_ground), sec, rear_start, rear_end)
-                m.update(freq_mhz=fr, takeoff_deg=90.0 - th, zin=zin, vswr=None, realized=None,
+                apply_gain_offset(m, series_c_loss_db(zin, zport))
+                m.update(freq_mhz=fr, takeoff_deg=90.0 - th, zin=zin, zin_port=zport, vswr=None, realized=None,
                          series_c_pf=c_auto if c_auto else series_c_value(gargs))
                 if zin is not None:
                     g = (zin - gargs.target_impedance) / (zin + gargs.target_impedance)
@@ -4272,39 +4398,62 @@ def run_jobs(pool, job_list):
 # Phase-line synthesis from the two-port response of the driven elements
 #
 # With the network removed, a 1 V source on one feed port (the other one shorted by its continuous wire) gives
-# the short-circuit admittances Y[a][b] (current at port a for 1 V at port b) and the element-current responses
-# M[a][b] (current at the center of element a). A line of characteristic impedance z0 and electrical length t
-# between the ports, crossed (s = -1) or straight (s = +1), with the fed port at 1 V, sets the far-port voltage
+# the short-circuit admittances Y[a][b] (current at port a for 1 V at port b), the element-current responses
+# M[a][b] (current at the center of element a) and the complex far field of each probe. A line of characteristic
+# impedance z0 and electrical length t between the ports, crossed (s = -1) or straight (s = +1), with the fed port
+# at 1 V, sets the far-port voltage
 #   Vd = (s - j z0 sin t Y[d][f]) / (cos t + j z0 sin t Y[d][d])
-# so the element currents are I_e = M[e][f] + M[e][d] Vd and the input admittance is
+# so the element currents are I_e = M[e][f] + M[e][d] Vd, the far field is E = E_f + Vd E_d and the input
+# admittance is
 #   Y[f][f] + Y[f][d] Vd + s (j sin t / z0 Vd + cos t (Y[d][f] + Y[d][d] Vd)).
 # An ideal LC pi network of characteristic impedance Zc and phase t behaves as that line at its design
-# frequency. The synthesis picks t (z0 fixed by the line) so that the far/fed element-current ratio is the
-# cardioid target: equal amplitudes, rear leading front by 180 - kd.
+# frequency. The superposed far field gives the exact pattern of the antenna with the line, so the synthesis picks
+# t (z0 fixed by the line) that maximizes the selected objective (gain, F/B or their weighted sum) on the pattern
+# ring: the horizon in free space, the take-off angle over ground. The ratio of the element-centre currents to the
+# point-source cardioid (equal amplitudes, rear leading by 180 - kd) is reported as a diagnostic and is the
+# criterion only when the probe patterns cannot be used.
 # ======================================================================================
 
+PROBE_GRID_STEP_DEG = 1.0   # theta/phi step of the probe pattern grid over ground (take-off search and ring)
+
+
+def _probe_rp_cards(gargs):
+    """RP cards of the probe decks. Free space: the horizon ring at --az-step plus the 5 degree rear half-sphere grid
+    of the rear-cone F/B. Over ground: the upper half-sphere on a PROBE_GRID_STEP_DEG grid, from which the elevation
+    cut (take-off angle), the ring at that angle and the rear cone are taken."""
+    if getattr(gargs, "ground", "free") == "free":
+        step = gargs.az_step
+        return [f"RP 0 1 {int(round(360.0 / step)) + 1} 1000 90 0 0 {step:.8g}", "RP 0 37 37 1000 0 90 5 5"]
+    s = PROBE_GRID_STEP_DEG
+    return [f"RP 0 {int(round(90.0 / s)) + 1} {int(round(360.0 / s)) + 1} 1000 0 0 {s:g} {s:g}"]
+
+
 def two_port_response(exe, gargs, td):
-    """Y and M of the two feed ports of the model gargs at gargs.freq (see the section comment); ValueError or
-    OSError when a probe run fails."""
+    """Y, M and far fields F of the two feed ports of the model gargs at gargs.freq (see the section comment);
+    ValueError or OSError when a probe run fails."""
     out = {}
     td = Path(td)
     for p in ("front", "rear"):
         a = _variant(gargs, probe_port=p, fsweep=None, fsweep_pattern=False, band_freqs=None, pattern_mode="ring",
                      ring_theta=90.0, pt_mode=0, rear_cone_rp=False, series_c_pf=None)
         deck_text, *_, info = build_deck(a)
-        out_path = _run_deck(exe, td, td / f"probe_{p}.nec", deck_text)
+        deck = deck_text.splitlines()
+        cut = next(i for i, l in enumerate(deck) if l.startswith("RP"))
+        deck = deck[:cut] + _probe_rp_cards(a) + [l for l in deck[cut:] if not l.startswith("RP")]
+        out_path = _run_deck(exe, td, td / f"probe_{p}.nec", "\n".join(deck))
         _read_checked(out_path)
         rows = parse_element_currents(out_path)
         for q in ("front", "rear"):
             out[("Y", q, p)] = segment_current(rows, *info["feed_ports"][q])
             out[("M", q, p)] = segment_current(rows, *info["ports"][q])
-        out[("F", p)] = parse_ring_fields(Path(out_path).read_text(errors="replace"), 90.0)
+        out[("F", p)] = parse_pattern_fields(Path(out_path).read_text(errors="replace"))
+    out["ground_free"] = getattr(gargs, "ground", "free") == "free"
     return out
 
 
-def parse_ring_fields(text, theta):
-    """{phi: (total gain dB, E_theta, E_phi)} of the pattern points at zenith angle theta of the first frequency
-    block, with the complex far-field components (the fields of different runs at the same frequency superpose)."""
+def parse_pattern_fields(text):
+    """{(theta, phi): (total gain dB, E_theta, E_phi)} of the pattern points of the first frequency block, with the
+    complex far-field components (the fields of different runs at the same frequency superpose)."""
     out = {}
     blocks = nec_blocks(text)
     lines = blocks[1][1] if len(blocks) > 1 else blocks[0][1]
@@ -4319,54 +4468,97 @@ def parse_ring_fields(text, theta):
         if not m:
             continue
         th, ph, _v, _h, tot, eth_m, eth_p, eph_m, eph_p = (float(x) for x in m.groups())
-        if abs(th - theta) <= 0.006:
-            out[round(ph % 360.0, 5)] = (tot, cmath.rect(eth_m, math.radians(eth_p)),
-                                         cmath.rect(eph_m, math.radians(eph_p)))
+        out[(round(th, 2), round(ph % 360.0, 5))] = (tot, cmath.rect(eth_m, math.radians(eth_p)),
+                                                    cmath.rect(eph_m, math.radians(eph_p)))
     return out
 
 
-def line_pattern_metrics(resp, z0, elec_deg, crossed, feed, rear_sector):
-    """Forward gain (dBi, phi = 0) and rear-sector F/B (dB) on the theta = 90 ring of the antenna fed through the
-    line z0 / elec_deg, from the superposition of the two probe patterns (fed port at 1 V, far port at V_d) and the
-    input power at the fed port; the gain is calibrated on the fed probe's own printed gain. None when the probe
-    patterns lack the field columns."""
+def _far_voltage(resp, z0, elec_deg, crossed, feed):
+    """Voltage of the far port (fed port at 1 V) for a line z0 / elec_deg; None when the line is singular."""
     f, d = (feed, "rear" if feed == "front" else "front")
-    ef, ed = resp.get(("F", f)), resp.get(("F", d))
-    if not ef or not ed:
-        return None
     s = -1.0 if crossed else 1.0
     t = math.radians(elec_deg)
     den = math.cos(t) + 1j * z0 * math.sin(t) * resp[("Y", d, d)]
     if abs(den) < 1e-15:
         return None
-    vd = (s - 1j * z0 * math.sin(t) * resp[("Y", d, f)]) / den
+    return (s - 1j * z0 * math.sin(t) * resp[("Y", d, f)]) / den
+
+
+def line_pattern_metrics(resp, z0, elec_deg, crossed, feed, rear_sector):
+    """Pattern metrics of the antenna fed through the line z0 / elec_deg, from the superposition of the two probe
+    patterns (fed port at 1 V, far port at V_d) and the input power at the fed port; the gain is calibrated on the
+    fed probe's own printed gain at its maximum. Free space: the horizon ring; over ground: the ring at the take-off
+    angle of the superposed elevation cut (phi = 0). Returns forward_gain (dBi, phi = 0), fb_point, fb_sector,
+    fb_cone (rear cone of the rear-sector half-angle, any elevation), theta_deg; None when the probe patterns lack
+    the field columns."""
+    f, d = (feed, "rear" if feed == "front" else "front")
+    ef, ed = resp.get(("F", f)), resp.get(("F", d))
+    if not ef or not ed:
+        return None
+    vd = _far_voltage(resp, z0, elec_deg, crossed, feed)
+    if vd is None:
+        return None
     zin = line_response(resp, z0, elec_deg, crossed, feed)[1]
     if not cmath.isfinite(zin) or zin == 0:
         return None
     p_in = 0.5 * (1.0 / zin).real
     p_f = 0.5 * resp[("Y", f, f)].real
-    ref = max((ph for ph in ef if ph in ed), key=lambda ph: ef[ph][0], default=None)
+    if "_common" not in resp:
+        resp["_common"] = {}
+    if (f, d) not in resp["_common"]:
+        common = [k for k in ef if k in ed]
+        resp["_common"][(f, d)] = (common, max(common, key=lambda k: ef[k][0], default=None))
+    keys, ref = resp["_common"][(f, d)]
     if ref is None or p_in <= 0 or p_f <= 0:
         return None
     e2_ref = abs(ef[ref][1]) ** 2 + abs(ef[ref][2]) ** 2
     if e2_ref <= 0:
         return None
-    k = 10.0 ** (ef[ref][0] / 10.0) * p_f / e2_ref
+    k_cal = 10.0 ** (ef[ref][0] / 10.0) * p_f / e2_ref
 
-    def gain(ph):
-        eth = ef[ph][1] + vd * ed[ph][1]
-        eph = ef[ph][2] + vd * ed[ph][2]
-        g = k * (abs(eth) ** 2 + abs(eph) ** 2) / p_in
+    def gain(key):
+        eth = ef[key][1] + vd * ed[key][1]
+        eph = ef[key][2] + vd * ed[key][2]
+        g = k_cal * (abs(eth) ** 2 + abs(eph) ** 2) / p_in
         return 10.0 * math.log10(g) if g > 1e-30 else -999.0
 
-    phis = [ph for ph in ef if ph in ed]
-    if 0.0 not in phis:
+    cache = resp.setdefault("_keys", {}).setdefault(feed, {})
+    if resp.get("ground_free", True):
+        theta = 90.0
+    else:
+        if "cut" not in cache:
+            cache["cut"] = sorted((k for k in keys if k[1] == 0.0), key=lambda k: k[0])
+        cut = cache["cut"]
+        if not cut:
+            return None
+        best = None
+        for k in cut:                      # >= : on a flat maximum keep the lowest elevation (largest theta)
+            g = gain(k)
+            if best is None or g >= best[1]:
+                best = (k[0], g)
+        theta = best[0]
+    ckey = (theta, tuple(rear_sector))
+    if ckey not in cache:
+        # Ring at theta and the directions of the rear cone (within the rear-sector half-angle of the back direction).
+        ring_k = {k[1]: k for k in keys if abs(k[0] - theta) <= 0.006}
+        half = math.radians(rear_cone_half_angle(*rear_sector))
+        th_r = math.radians(theta)
+        back = (-math.sin(th_r), 0.0, math.cos(th_r))
+        cos_half = math.cos(half) - 1e-9
+        cone_k = [(th, ph) for (th, ph) in keys
+                  if (math.sin(math.radians(th)) * math.cos(math.radians(ph)) * back[0]
+                      + math.cos(math.radians(th)) * back[2]) >= cos_half]
+        cache[ckey] = (ring_k, cone_k)
+    ring, cone_k = cache[ckey]
+    if 0.0 not in ring:
         return None
-    rear = [gain(ph) for ph in phis if rear_sector[0] <= ph <= rear_sector[1]]
+    rear = [gain(ring[ph]) for ph in ring if rear_sector[0] <= ph <= rear_sector[1]]
     if not rear:
         return None
-    fwd = gain(0.0)
-    return {"forward_gain": fwd, "fb_sector": fwd - max(rear), "fb_point": fwd - gain(180.0) if 180.0 in phis else None}
+    fwd = gain(ring[0.0])
+    worst = max([max(rear)] + [gain(k) for k in cone_k])
+    return {"forward_gain": fwd, "fb_sector": fwd - max(rear), "fb_cone": fwd - worst,
+            "fb_point": fwd - gain(ring[180.0]) if 180.0 in ring else None, "theta_deg": theta}
 
 
 def line_response(resp, z0, elec_deg, crossed, feed="front"):
@@ -4381,10 +4573,9 @@ def line_response(resp, z0, elec_deg, crossed, feed="front"):
     def M(a, b):
         return resp[("M", a, b)]
 
-    den = math.cos(t) + 1j * z0 * math.sin(t) * Y(d, d)
-    if abs(den) < 1e-15:
+    vd = _far_voltage(resp, z0, elec_deg, crossed, feed)
+    if vd is None:
         return complex("nan"), complex("nan")
-    vd = (s - 1j * z0 * math.sin(t) * Y(d, f)) / den
     i_fed = M(f, f) + M(f, d) * vd
     ratio = (M(d, f) + M(d, d) * vd) / i_fed if abs(i_fed) > 1e-30 else complex("nan")
     i_line = s * (1j * math.sin(t) / z0 * vd + math.cos(t) * (Y(d, f) + Y(d, d) * vd))
@@ -4393,14 +4584,14 @@ def line_response(resp, z0, elec_deg, crossed, feed="front"):
 
 
 def cardioid_target(feed_element, spacing_factor):
-    """Far/fed element-current ratio of the ideal cardioid: rear leads front by 180 - kd, equal amplitudes."""
+    """Far/fed element-current ratio of the point-source cardioid: rear leads front by 180 - kd, equal amplitudes."""
     lead = math.radians(180.0 - 360.0 * spacing_factor)
     return cmath.exp(1j * lead) if feed_element == "front" else cmath.exp(-1j * lead)
 
 
 def exact_line_solution(resp, target, crossed, feed="front"):
-    """Line (elec_deg, z0) that gives the target ratio exactly when z0 is free, or None. Closed form: the far port
-    must sit at r = (T M[f][f] - M[d][f]) / (M[d][d] - T M[f][d]) and the line must satisfy
+    """Line (elec_deg, z0) that gives the target element-current ratio exactly when z0 is free, or None. Closed form:
+    the far port must sit at r = (T M[f][f] - M[d][f]) / (M[d][d] - T M[f][d]) and the line must satisfy
     s = r cos t + j z0 K sin t with K = Y[d][f] + Y[d][d] r."""
     f, d = (feed, "rear" if feed == "front" else "front")
     s = -1.0 if crossed else 1.0
@@ -4424,15 +4615,22 @@ def exact_line_solution(resp, target, crossed, feed="front"):
     return None
 
 
+def synthesis_objective(objective="front-back", w_gain=1.0, w_fb=0.5, rear_sector=(150, 210), fb_metric="sector"):
+    """Objective dict of synthesize_line (the same criterion as the optimizer score, on the probe patterns)."""
+    return {"objective": objective, "w_gain": w_gain, "w_fb": w_fb, "rear_sector": tuple(rear_sector),
+            "fb_metric": fb_metric}
+
+
 def synthesize_line(exe, gargs, elec_min, elec_max, td=None, objective=None):
     """Electrical length in [elec_min, elec_max] for the line/network impedance of gargs.
 
-    Without objective: the line whose element-current ratio is closest to the two-element cardioid target.
-    With objective (dict: objective, w_gain, w_fb, rear_sector; used with reflectors/directors, where the
-    two-element target does not hold): the line that maximizes that objective on the theta = 90 ring, computed from
-    the superposed probe patterns (line_pattern_metrics); the cardioid target is the fallback when the patterns are
-    not usable. Returns a dict: elec_deg, ratio, zin, error (|ratio - target|), target, z0 (the impedance used),
-    exact (the free-z0 solution or None) and, with an objective, pattern (the metrics at the chosen line)."""
+    The line that maximizes the objective (dict from synthesis_objective; default front-back with the sector F/B) on
+    the pattern computed from the superposed probe patterns (line_pattern_metrics); the element-centre current ratio
+    closest to the point-source cardioid is the fallback when the patterns are not usable. Returns a dict: elec_deg,
+    ratio, zin, error (|ratio - cardioid|), target, z0 (the impedance used), exact (the free-z0 cardioid-current
+    solution or None), range, at_limit and, when the pattern criterion was used, pattern (the metrics at the chosen
+    line) and objective."""
+    objective = objective or synthesis_objective()
     z0 = abs(gargs.coax_z0) if gargs.network == "tl" else gargs.lc_z0
     target = cardioid_target(gargs.feed_element, gargs.spacing_factor)
     with contextlib.ExitStack() as stack:
@@ -4443,25 +4641,29 @@ def synthesize_line(exe, gargs, elec_min, elec_max, td=None, objective=None):
         ratio = line_response(resp, z0, th, gargs.crossed, gargs.feed_element)[0]
         return abs(ratio - target) if cmath.isfinite(ratio) else math.inf
 
+    def fb_of(m):
+        metric = objective.get("fb_metric", "sector")
+        if metric == "point" and m["fb_point"] is not None:
+            return m["fb_point"]
+        return m["fb_cone"] if metric == "cone" else m["fb_sector"]
+
     def objective_err(th):
         m = line_pattern_metrics(resp, z0, th, gargs.crossed, gargs.feed_element, objective["rear_sector"])
         if m is None:
             return math.inf
-        fb = m["fb_point"] if objective.get("fb_metric") == "point" and m["fb_point"] is not None else m["fb_sector"]
         if objective["objective"] == "gain":
             return -m["forward_gain"]
         if objective["objective"] == "balance":
-            return -(objective["w_gain"] * m["forward_gain"] + objective["w_fb"] * fb)
-        return -fb
-
-    err = cardioid_err
-    if objective and line_pattern_metrics(resp, z0, 0.5 * (elec_min + elec_max), gargs.crossed, gargs.feed_element,
-                                          objective["rear_sector"]) is not None:
-        err = objective_err
+            return -(objective["w_gain"] * m["forward_gain"] + objective["w_fb"] * fb_of(m))
+        return -fb_of(m)
 
     lo, hi = max(elec_min, 0.05), min(elec_max, 359.95)
     if hi <= lo:
         raise ValueError(f"no line length between {elec_min:.1f} and {elec_max:.1f} degrees")
+    err = cardioid_err
+    if line_pattern_metrics(resp, z0, 0.5 * (lo + hi), gargs.crossed, gargs.feed_element,
+                            objective["rear_sector"]) is not None:
+        err = objective_err
     n = max(2, int(math.ceil((hi - lo) / 0.5)))
     grid = [lo + (hi - lo) * i / n for i in range(n + 1)]
     best = min(grid, key=err)
@@ -4483,6 +4685,7 @@ def synthesize_line(exe, gargs, elec_min, elec_max, td=None, objective=None):
         out["pattern"] = line_pattern_metrics(resp, z0, th, gargs.crossed, gargs.feed_element,
                                               objective["rear_sector"])
         out["objective"] = objective["objective"]
+        out["fb_metric"] = objective.get("fb_metric", "sector")
     return out
 
 
@@ -4497,19 +4700,21 @@ def synthesis_text(syn):
 def _synthesis_body(syn):
     """synthesis_text without the range note."""
     r = syn["ratio"]
-    txt = (f"line {syn['elec_deg']:.1f} deg at Z0 {syn['z0']:.1f} ohm gives |I_far/I_fed| = {abs(r):.3f}, phase "
-           f"{math.degrees(cmath.phase(r)):+.1f} deg (target 1.000, {math.degrees(cmath.phase(syn['target'])):+.1f} "
-           f"deg; error {syn['error']:.3f}); Zin at the fed port {syn['zin'].real:.1f}{syn['zin'].imag:+.1f}j ohm")
-    ex = syn.get("exact")
+    cur = (f"element-centre currents |I_far/I_fed| = {abs(r):.3f}, phase {math.degrees(cmath.phase(r)):+.1f} deg "
+           f"(point-source cardioid 1.000, {math.degrees(cmath.phase(syn['target'])):+.1f} deg)")
+    zin = f"Zin at the fed port {syn['zin'].real:.1f}{syn['zin'].imag:+.1f}j ohm"
     if syn.get("pattern"):
         m = syn["pattern"]
+        where = "horizon ring" if m["theta_deg"] == 90.0 else f"ring at {90.0 - m['theta_deg']:g} deg take-off"
         return (f"line {syn['elec_deg']:.1f} deg at Z0 {syn['z0']:.1f} ohm maximizes the {syn['objective']} "
-                f"objective of the probe patterns (gain {m['forward_gain']:.2f} dBi, rear-sector F/B "
-                f"{m['fb_sector']:.1f} dB on the horizon ring); the two-element cardioid ratio is not the target with "
-                f"reflectors/directors (|I_far/I_fed| = {abs(r):.3f}, phase {math.degrees(cmath.phase(r)):+.1f} deg); "
-                f"Zin at the fed port {syn['zin'].real:.1f}{syn['zin'].imag:+.1f}j ohm")
+                f"objective of the superposed probe patterns (gain {m['forward_gain']:.2f} dBi, F/B point "
+                + (f"{m['fb_point']:.1f}" if m["fb_point"] is not None else "n/a")
+                + f" / sector {m['fb_sector']:.1f} / cone {m['fb_cone']:.1f} dB on the {where}); {cur}; {zin}")
+    txt = (f"line {syn['elec_deg']:.1f} deg at Z0 {syn['z0']:.1f} ohm gives {cur} (error {syn['error']:.3f}; "
+           f"the probe patterns were not usable, so the current ratio is the criterion); {zin}")
+    ex = syn.get("exact")
     if ex:
-        txt += f". The exact target needs Z0 = {ex[1]:.1f} ohm and {ex[0]:.1f} deg"
+        txt += f". The exact cardioid current ratio needs Z0 = {ex[1]:.1f} ohm and {ex[0]:.1f} deg"
     return txt
 
 
@@ -4542,6 +4747,8 @@ def scored_frequencies(p, args):
 
 
 def run_optimize(p, args, network_given):
+    if args.check_convergence is None:
+        args.check_convergence = True
     check_common_model_args(p, args)
     single = args.network in ("tl", "lc")
     fixed_d = [bool(getattr(args, f"{w}_sections") or getattr(args, f"{w}_diameter") is not None)
@@ -4672,11 +4879,12 @@ def run_optimize(p, args, network_given):
     else:
         z0s = [None]
     try:
-        rear_start, rear_end = [int(x.strip()) for x in args.rear_sector.split(",")]
-    except Exception:
+        rear_start, rear_end = [float(x.strip()) for x in args.rear_sector.split(",")]
+    except ValueError:
         p.error("--rear-sector must have the format start,end, for example 150,210")
-    if not (0 <= rear_start < rear_end <= 360):
-        p.error("--rear-sector requires 0 <= start < end <= 360")
+    if not (90.0 < rear_start < 180.0 < rear_end < 270.0):
+        p.error("--rear-sector must contain the back direction and stay in the rear half: 90 < start < 180 < end < 270 "
+                "degrees (for example 150,210)")
     exe = find_nec2c(args)
     if not exe:
         p.error("nec2c was not found (--nec2c, HB9CV_NEC2C or PATH); install it before running the scan")
@@ -4768,7 +4976,8 @@ def run_optimize(p, args, network_given):
                     line_allowance_mm=args.line_allowance_mm, feed_style=args.feed_style,
                     tap_offset_mm=args.tap_offset_mm, tap_wire_mm=args.tap_wire_mm, series_c_pf=args.series_c_pf,
                     series_c_q=args.series_c_q, boom_clearance_mm=args.boom_clearance_mm,
-                    ideal_drive=args.ideal_drive, extended_kernel=args.extended_kernel, nec2c=args.nec2c)
+                    ideal_drive=args.ideal_drive, extended_kernel=args.extended_kernel, kernel=args.kernel,
+                    nec2c=args.nec2c)
 
     def gargs_from(c):
         z0c = c["z0"]
@@ -4834,15 +5043,9 @@ def run_optimize(p, args, network_given):
                 print(f"Line synthesis, spacing {sp:g} lambda" + (f", tap {tap:g} mm" if tap is not None else "")
                       + f": {synthesis_text(syn)}; scan centered on {line_bases[(sp, z0, tap)]:.1f} deg.")
 
-    # With reflectors/directors in free space the synthesis maximizes the selected objective computed from the
-    # superposed probe patterns instead of aiming at the two-element cardioid.
-    syn_objective = None
-    if n_par and args.ground == "free":
-        syn_objective = {"objective": args.objective, "w_gain": args.w_gain, "w_fb": args.w_fb,
-                         "rear_sector": (rear_start, rear_end), "fb_metric": args.fb_metric}
-    elif n_par and args.synthesize_line and single:
-        print("NOTE: over ground the line synthesis aims at the two-element cardioid relation; with "
-              "reflectors/directors that is only a starting point, the scan and refinement find the line.")
+    # The synthesis maximizes the selected objective (the same F/B metric and weights as the score) on the pattern
+    # computed from the superposed probe patterns.
+    syn_objective = synthesis_objective(args.objective, args.w_gain, args.w_fb, (rear_start, rear_end), args.fb_metric)
     compute_line_bases()
 
     def line_options(spacing, z0=None, tap=None):
@@ -5026,6 +5229,7 @@ def run_optimize(p, args, network_given):
                     tuple(map(r, c["ref_sp"])), tuple(map(r, c["dir_len"])), tuple(map(r, c["dir_sp"])))
 
         sim_cache = {}      # candidate key -> CSV row (None: the run failed); every geometry is simulated once
+        viol_by_row = {}    # id(CSV row) -> unrounded Zin-window violation (ohm) used for the ranking
 
         def absorb(idx, cand, res, stage):
             """Turn one simulation result into a CSV row; update the best candidate."""
@@ -5094,6 +5298,9 @@ def run_optimize(p, args, network_given):
                    "front_to_back_sector_dB": d["robust_fb"], "front_to_back_cone_dB": d["cone_fb"],
                    "Zin_real": zin.real if zin is not None else "",
                    "Zin_imag": zin.imag if zin is not None else "",
+                   "Zin_real_port": d["zin_port"].real if d.get("zin_port") is not None else "",
+                   "Zin_imag_port": d["zin_port"].imag if d.get("zin_port") is not None else "",
+                   "series_c_loss_dB": d.get("series_c_loss_db", 0.0) if single else "",
                    "VSWR_vs_target": d["vswr"] if d["vswr"] is not None else "",
                    "band_points": len(freqs),
                    "band_worst_freq_MHz": pf[worst_i]["freq_mhz"],
@@ -5130,6 +5337,7 @@ def run_optimize(p, args, network_given):
                 row.update(score_p10="", score_p10_lo="", score_p10_hi="", fb_p10="", vswr_p90="", mc_samples="")
             viol = zin_violation(pf)
             row["zin_violation_ohm"] = round(viol, 3)
+            viol_by_row[id(row)] = viol
             ev = {"row": row, "cand": dict(cand), "per_freq": pf, "score": score, "ok": not violation, "viol": viol}
             evals.append(ev)
             if ev["ok"] and (st["best"] is None or score > st["best"]["score"]):
@@ -5207,7 +5415,7 @@ def run_optimize(p, args, network_given):
                 def x_of(front):
                     c = dict(c0, front=front)
                     row = eval_batch([c], "pretune")[0]
-                    return None if not row or row["Zin_imag"] == "" else row["Zin_imag"]
+                    return None if not row or row["Zin_imag_port"] == "" else row["Zin_imag_port"]
 
                 pts, f_a = [], f_mid
                 x_a = x_of(f_a)
@@ -5229,7 +5437,8 @@ def run_optimize(p, args, network_given):
                     f_best, x_best = min(pts, key=lambda t: abs(t[1]))
                     shift = f_best - f_mid
                     front_lengths = sorted({round(min(max(v + shift, 0.5), 1.5), 6) for v in front_lengths})
-                    print(f"Pre-tune: front length factor {f_best:.4f} gives X_in = {x_best:+.1f} ohm at "
+                    print(f"Pre-tune: front length factor {f_best:.4f} gives X_in = {x_best:+.1f} ohm at the NEC port "
+                          + ("(without the series capacitor) " if args.series_c_pf is not None else "") + "at "
                           f"{args.freq:g} MHz ({len(pts)} nec2c run(s)); front grid centered on it: "
                           + ",".join(f"{v:g}" for v in front_lengths))
                     if args.synthesize_line and abs(shift) > 1e-9 and abs_coax is None:
@@ -5334,7 +5543,7 @@ def run_optimize(p, args, network_given):
                 for i, row in enumerate(rows):
                     if not row:
                         continue
-                    rk = rank_of(row["score"], row["zin_violation_ohm"] if row["zin_constraint"] else 0.0)
+                    rk = rank_of(row["score"], viol_by_row[id(row)] if row["zin_constraint"] else 0.0)
                     if rank_better(rk, best_rank):
                         best_i, best_rank = i, rk
                 if best_i is not None:
@@ -5407,7 +5616,7 @@ def run_optimize(p, args, network_given):
                     rows = eval_batch([c for _, _, c in todo], "nelder-mead")
                     for (i, key, _), row in zip(todo, rows):
                         val = math.inf if not row else nm_value(
-                            rank_of(row["score"], row["zin_violation_ohm"] if row["zin_constraint"] else 0.0))
+                            rank_of(row["score"], viol_by_row[id(row)] if row["zin_constraint"] else 0.0))
                         cache[key] = out[i] = val
                 return [math.inf if v is None else v for v in out]
 
@@ -5487,8 +5696,12 @@ def run_optimize(p, args, network_given):
                 matching network frozen at the nominal design unless --tol-retune."""
                 g = gargs_from(d)
                 if tmatch:
+                    # A built tap stays on the element: 1.5 segments from the center, one segment from the tip.
+                    length = min(150.0 / args.freq * d["rear"], 139.0 / args.freq * d["front"]) * 1000.0
+                    seg = length / args.segments
                     for w, kt, kb in (("rear", "tr", "br"), ("front", "tf", "bf")):
-                        setattr(g, f"tap_mm_{w}", max(1.0, d["tap"] + u[kt] * args.tol_tap_mm))
+                        tap = d["tap"] + u[kt] * args.tol_tap_mm
+                        setattr(g, f"tap_mm_{w}", min(max(tap, 1.5 * seg), length / 2.0 - seg))
                         setattr(g, f"tap_offset_mm_{w}", max(1.0, args.tap_offset_mm + u[kb] * args.tol_bar_mm))
                 if args.network == "tl":
                     g.coax_vf = min(1.0, args.coax_vf * (1.0 + u["vf"] * args.tol_vf_pct / 100.0))
@@ -5716,7 +5929,8 @@ def run_optimize(p, args, network_given):
     print(f"Take-off angle: {best['takeoff_deg']:g} deg above the horizon; azimuth half-power beamwidth: "
           f"{best['hpbw_az_deg']:.1f} deg; F/B at the take-off angle: {best['front_to_back_dB']:.2f} dB; "
           f"rear sector {best['front_to_back_sector_dB']:.2f} dB; rear cone {best['front_to_back_cone_dB']:.2f} dB.")
-    print(f"F/B metrics: sector = gain(phi=0) minus the maximum of the rear sector {rear_start}..{rear_end} degrees on "
+    print(f"F/B metrics: sector = gain(phi=0) minus the maximum of the rear sector {rear_start:g}..{rear_end:g} "
+          "degrees on "
           f"the ring; cone = the same against every direction within {rear_cone_half_angle(rear_start, rear_end):g} "
           f"degrees of the back direction, at any elevation. The score uses: {args.fb_metric}.")
     if best["objective_term"] != "":
@@ -5825,7 +6039,7 @@ def run_optimize(p, args, network_given):
 
     if out_path.exists() and li_best.get("ports"):
         try:
-            print_element_currents(out_path, ports=li_best["ports"])
+            print_element_currents(out_path, ports=li_best["ports"], spacing_factor=best_ev["cand"]["spacing"])
         except (ValueError, OSError) as exc:
             print(f"NOTE: element-current report not available: {exc}", file=sys.stderr)
     mc_tolerances = {"dist": args.tol_dist, "length_mm": args.tol_length_mm, "spacing_mm": args.tol_spacing_mm,
@@ -5837,6 +6051,8 @@ def run_optimize(p, args, network_given):
     loss_bs = conductor_loss_check(exe, final_gargs(best_ev["cand"]), rear_start, rear_end)
     agt_bs = average_gain_test(exe, final_gargs(best_ev["cand"]))
     conv = convergence_check(exe, final_gargs(best_ev["cand"]), rear_start, rear_end) if args.check_convergence else None
+    if convergence_note(conv):
+        print(f"NOTE: {convergence_note(conv)}.")
     robust = robustness_check(exe, final_gargs(best_ev["cand"]), rear_start, rear_end) if args.robustness else None
     if args.build_sheet and single:
         zbest = (complex(best["Zin_real"], best["Zin_imag"]) if best["Zin_real"] != "" else None)
@@ -5861,7 +6077,7 @@ def run_optimize(p, args, network_given):
                                    "fb_p10": best["fb_p10"], "vswr_p90": best.get("vswr_p90"),
                                    "tolerances": mc_tolerances}
                                   if isinstance(best.get("score_p10"), float) else None),
-                           "loss": loss_bs, "agt": agt_bs},
+                           "loss": loss_bs, "agt": agt_bs, "convergence": conv},
                           {"elec_deg": best["line_electrical_deg"], "phys_m": best["line_length_m"] or 0.0,
                            "z0": best["line_z0_ohm"] or None,
                            "spacing_mm": best["line_spacing_mm"] if best["line_spacing_mm"] != "" else None,
@@ -5956,7 +6172,7 @@ def run_match(p, args):
     gamma = (z - args.z0) / (z + args.z0)
     rho = abs(gamma)
     vswr = (1 + rho) / (1 - rho) if rho < 1 else float("inf")
-    rl = -20 * math.log10(rho) if rho else float("inf")
+    rl = -20 * math.log10(rho) if rho > RL_MATCH_RHO else float("inf")
     reflected = rho ** 2
 
     try:
@@ -5968,7 +6184,8 @@ def run_match(p, args):
 
     print(f"Frequency: {freq:.6f} MHz")
     print(f"Impedance {source}: {z.real:.4f} {z.imag:+.4f}j ohm")
-    print(f"Before: |Gamma|={rho:.6f}; VSWR={vswr:.3f}:1; return loss={rl:.2f} dB; reflected power={reflected*100:.1f}%")
+    print(f"Before: |Gamma|={rho:.6f}; VSWR={vswr:.3f}:1; return loss={rl_text(rl)}; "
+          f"reflected power={reflected * 100:.1f}%")
     print("\nIdeal L-network computed (mathematical values, not final components):")
     print(f"  Topology {lnet_topology_text(net)}")
     print(f"  Series branch: {lnet_describe(net['series'])}")
@@ -5978,7 +6195,8 @@ def run_match(p, args):
         print(f"  {lnet_solution_note(args.lnet_solution, net)}")
     for alt in sols:
         if alt is not net:
-            print(f"  Other solution ({lnet_kind_text(alt)}): series {lnet_describe(alt['series'])}, "
+            print(f"  Other solution (topology {alt['topology']}, {lnet_kind_text(alt)}): series "
+                  f"{lnet_describe(alt['series'])}, "
                   f"shunt {lnet_describe(alt['shunt'])}")
     for w_txt in srf_warnings(net, freq, freq, args.esl_nh, args.coil_cp_pf):
         print(f"  {w_txt}")
@@ -6035,7 +6253,8 @@ def run_match(p, args):
                           "topology": net["topology"], "topology_text": lnet_topology_text(net),
                           "series": lnet_describe(net["series"]), "shunt": lnet_describe(net["shunt"]),
                           "solution": lnet_kind_text(net),
-                          "alternatives": [{"series": lnet_describe(a["series"]), "shunt": lnet_describe(a["shunt"]),
+                          "alternatives": [{"topology": a["topology"], "series": lnet_describe(a["series"]),
+                                            "shunt": lnet_describe(a["shunt"]),
                                             "solution": lnet_kind_text(a)} for a in sols if a is not net],
                           "vswr_before": vswr, "vswr_after": vswr_after, "zin_after": z_input,
                           "preview": [{"freq_mhz": f_, "vswr": v_} for f_, v_ in preview]})
@@ -6117,13 +6336,14 @@ def run_sweep(p, args):
         print(lnet_solution_note(args.lnet_solution, ideal))
     for alt in sols:
         if alt is not ideal:
-            print(f"Other solution ({lnet_kind_text(alt)}): series {lnet_describe(alt['series'])}, "
+            print(f"Other solution (topology {alt['topology']}, {lnet_kind_text(alt)}): series "
+                  f"{lnet_describe(alt['series'])}, "
                   f"shunt {lnet_describe(alt['shunt'])}")
     for label, net in networks:
         zi = lnet_zin(design_z, w0, net)
         vswr, rl, _ = lnet_metrics(zi, args.z0)
         mism, diss, _ = lnet_losses(design_z, w0, net, args.z0)
-        print(f"{label}: Zin={zi.real:.3f}{zi.imag:+.3f}j ohm; VSWR={vswr:.3f}:1; return loss={rl:.2f} dB; "
+        print(f"{label}: Zin={zi.real:.3f}{zi.imag:+.3f}j ohm; VSWR={vswr:.3f}:1; return loss={rl_text(rl)}; "
               f"mismatch loss={mism:.3f} dB; dissipation={diss:.3f} dB")
 
     rows = []
@@ -6174,8 +6394,10 @@ def run_sweep(p, args):
     tol_l = getattr(args, "tol_l", 0.0) or 0.0
     tol_c = getattr(args, "tol_c", 0.0) or 0.0
     if tol_l > 0 or tol_c > 0:
-        print(f"\nTOLERANCE ANALYSIS (L ±{tol_l:g}%, C ±{tol_c:g}%)")
-        corners = list(itertools.product((-1, +1), repeat=2))   # (sign_series, sign_shunt)
+        print(f"\nTOLERANCE ANALYSIS (L ±{tol_l:g}%, C ±{tol_c:g}%; worst case over the corners and edge midpoints "
+              "of the tolerance box)")
+        # Boundary of the tolerance box: the 4 corners and the 4 edge midpoints (sign_series, sign_shunt).
+        corners = [c for c in itertools.product((-1, 0, +1), repeat=2) if c != (0, 0)]
         for label, net in networks:
             worst_by_freq = []
             for f_mhz, z_load in table:
@@ -6329,7 +6551,7 @@ def build_parser():
     opt((G, O), "--line-wire-diameter", type=positive_float, default=None,
         help="open-wire line: wire diameter d in mm (default 3)")
     opt((G, O), "--line-spacing", type=positive_float, default=None,
-        help="open-wire line: wire center spacing D in mm (default 20); Z0 = 120*acosh(D/d)")
+        help="open-wire line: wire center spacing D in mm (default 20); Z0 = 119.9*acosh(D/d)")
     opt((G, O), "--line-z0", "--coax-z0", dest="coax_z0", type=positive_float, default=None,
         help="Z0 of the TL in ohms (coax line only, default 50; for openwire it is computed from the geometry). "
              "--coax-z0 is a deprecated alias of --line-z0")
@@ -6342,8 +6564,8 @@ def build_parser():
         help=f"segments per element (odd, >= 5); default {DEFAULT_SEGMENTS}, {DEFAULT_SEGMENTS_TMATCH} with "
              "--feed-style tmatch")
     opt((G, O), "--az-step", type=positive_float, default=1.0,
-        help="azimuth pattern step in degrees (>= 0.01: NEC prints 2 decimals); must divide 360 exactly; "
-             "small values increase run time")
+        help="azimuth pattern step in degrees (>= 0.01: NEC prints 2 decimals); must divide 180 exactly (the ring "
+             "needs phi = 180); small values increase run time")
     opt((G, O), "--target-impedance", type=positive_float, default=None,
         help="target impedance in ohms (balanced side). Default 50, or 12.5 with --balun-ratio 4:1. "
              "generate: INFORMATIVE ONLY; optimize: reference for VSWR_vs_target")
@@ -6395,10 +6617,12 @@ def build_parser():
              "always 0..180; values never wrap around 360")
     opt((G, O), "--synthesize-line", action=argparse.BooleanOptionalAction, default=True,
         help="--network tl/lc: compute the phase line from the two-port response of the driven elements (two nec2c "
-             "probe runs) so that the element currents approach the cardioid target (equal amplitudes, rear leading "
-             "by 180 - kd). generate: the default line when none is given; optimize: the centre of the line scan of "
-             "every spacing and Z0. --no-synthesize-line uses the cardioid theory (kd + 180 crossed), never shorter "
-             "than the buildable minimum")
+             "probe runs): the superposed probe patterns give the exact pattern for any line, and the line that "
+             "maximizes --objective (optimize: with --fb-metric, --rear-sector, --w-gain/--w-fb) is chosen, on the "
+             "horizon in free space and at the take-off angle over ground; the element-current ratio against the "
+             "point-source cardioid is reported as a diagnostic. generate: the default line when none is given; "
+             "optimize: the centre of the line scan of every spacing and Z0. --no-synthesize-line uses the cardioid "
+             "theory (kd + 180 crossed), never shorter than the buildable minimum")
     opt((G, O), "--feed-style", choices=["center", "tmatch"], default=None,
         help="tmatch (default with --network tl/lc): the classic HB9CV feed: continuous elements with a T-match on "
              "each driven element (taps at --tap-mm from the center, bar at --tap-offset-mm toward the other "
@@ -6425,19 +6649,24 @@ def build_parser():
         help="--network tl, build sheet only: matched loss of the phasing line in dB/m; the build sheet reports "
              "the upper bound loss x physical length (as if all the power crossed the line). The NEC TL itself is "
              "lossless")
+    opt((G, O), "--kernel", choices=["auto", "thin", "extended"], default=None,
+        help="NEC-2 kernel. auto (default): the extended thin-wire kernel (EK card) when any wire has segments shorter "
+             f"than {EK_AUTO_RATIO:g} wire radii, otherwise the thin-wire kernel; on thick tubes (10 mm at 2 m) EK "
+             "keeps the input impedance converged with the segmentation. thin / extended force one kernel. Every run is "
+             "checked for a physical power budget and discarded if it fails")
     opt((G, O), "--extended-kernel", action="store_true",
-        help="use NEC-2's extended thin-wire kernel (EK card). Off by default: it only helps on thick straight wires, "
-             "NEC-2 turns it off at junctions, and with T-match junctions and short segments it can make the current "
-             "solution unstable (negative radiated power); every run is checked for a physical power budget")
+        help="deprecated alias of --kernel extended")
     opt((G, O), "--ideal-drive", choices=["current", "voltage"], default="current",
         help="--network ideal: current (default) prescribes the amplitude/phase of the element CURRENTS, as the "
              "cardioid theory does (each source gets a lossless series reactance of 1e6 ohm, so the currents follow "
              "the source voltages whatever the mutual coupling); voltage prescribes the source voltages")
     opt((G, O), "--nec2c", default=None, metavar="PATH",
         help=f"nec2c executable, or the folder that holds it (default: ${NEC2C_ENV}, then the PATH)")
-    opt((G, O), "--check-convergence", action="store_true",
+    opt((G, O), "--check-convergence", action=argparse.BooleanOptionalAction, default=None,
         help="simulate the model (optimize: the best model) with --segments n and 2n+1 and report the change of "
-             "gain, F/B and Zin (warns above 0.1 dB of gain, 1 dB of F/B, 5 %% of R_in or 5 %% of |Zin|); needs nec2c")
+             "gain, F/B and Zin (warns above 0.1 dB of gain, 1 dB of F/B, 5 %% of R_in or 5 %% of |Zin|); |delta Zin| "
+             "is reported as the Zin uncertainty in the summary, the build sheet and the JSON. Default: on in "
+             "optimize, off in generate; needs nec2c")
     opt((G, O), "--robustness", action="store_true",
         help="one table of the change in gain, F/B and Zin caused by a metallic boom (when not modeled), a mast "
              f"placed where it breaks the symmetry of the elements (horizontal: 1 m on a {ROBUST_MAST_OFFSET_MM:g} mm "
@@ -6515,7 +6744,9 @@ def build_parser():
         help="rear element length factor relative to 150/f meters")
     opt((G,), "--front-length-factor", type=positive_float, default=1.0,
         help="front element length factor relative to 139/f meters")
-    opt((G,), "--rear-ratio", type=positive_float, default=0.92, help="ideal rear amplitude relative to the front one")
+    opt((G,), "--rear-ratio", type=positive_float, default=1.0,
+        help="ideal network: rear amplitude relative to the front one (default 1.0, the equal currents of the "
+             "cardioid with --ideal-drive current)")
     opt((G,), "--rear-phase", type=phase_float, default=None,
         help="ideal rear phase in degrees (ideal/lc network); default 180-360*spacing (+135 for 0.125 lambda)")
     opt((G,), "--run", action="store_true", help="try to run nec2c after generating the file")
@@ -6687,8 +6918,8 @@ def build_parser():
     opt((S,), "--sweep-csv", default="lnetwork_sweep.csv", help="output CSV of the L-network sweep")
     opt((S,), "--tol-l", type=nonneg_float, default=0.0,
         help="inductor tolerance as a percentage (e.g. 5 for 5 %%, 0 = off); reports the worst-case VSWR over the "
-             "four corners of the tolerance box at every frequency of the sweep, for every network (ideal and "
-             "commercial) around its own nominal values")
+             "corners and edge midpoints of the tolerance box at every frequency of the sweep, for every network "
+             "(ideal and commercial) around its own nominal values")
     opt((S,), "--tol-c", type=nonneg_float, default=0.0,
         help="capacitor tolerance as a percentage (e.g. 5 for 5 %%, 0 = off); see --tol-l")
     return p, table

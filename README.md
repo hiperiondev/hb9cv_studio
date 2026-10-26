@@ -33,8 +33,11 @@ It comes in two parts:
 - Up to 2 extra reflectors and 5 directors.
 - Free space or real ground (average, good, perfect or custom εr/σ), horizontal or vertical polarization, and an
   optional metal mast.
-- Phasing line synthesized from the actual two-port response of the elements, not just the textbook
-  180° − kd rule.
+- Phasing line synthesized from the actual two-port response of the elements: the two probe patterns are
+  superposed to get the exact pattern for any line, and the line that maximizes the chosen objective (gain, F/B,
+  or both) is picked, at the horizon in free space or at the take-off angle over ground. The textbook 180° − kd
+  rule (equal element currents) is reported as a diagnostic only, because unequal elements and T-matches move the
+  F/B optimum away from it.
 
 **Analysis**
 - Gain in dBi and dBd, realized gain, take-off angle, and azimuth/elevation half-power beamwidth.
@@ -42,8 +45,11 @@ It comes in two parts:
   elevation.
 - Input impedance, VSWR, and 2:1 bandwidth from a frequency sweep.
 - Quality checks: average-gain test, NEC power-budget check (unphysical runs are rejected), segmentation
-  convergence (gain, F/B, R_in and |Zin|), wire-clearance check, thin-wire rule warnings, and warnings for phasing
-  lines that cannot be built straight (too short, folded, or a synthesized line at the limit of its range).
+  convergence (gain, F/B, R_in and |Zin|; on by default in optimize, where |ΔZin| is reported as the Zin
+  uncertainty), wire-clearance check, thin-wire rule warnings, and warnings for phasing lines that cannot be built
+  straight (too short, folded, or a synthesized line at the limit of its range).
+- Automatic NEC kernel (`--kernel auto`): the extended thin-wire kernel (EK) is used when segments are shorter than
+  8 wire radii (thick tubes, T-match junctions), so the input impedance converges with the segmentation.
   T-match models typically show an average gain of about 0.95 (gains about 0.2 dB low): a known NEC-2 limit at
   thick-wire junctions, reported but within the 0.5 dB tolerance.
 - Sensitivity studies: metal boom, mast, mast length, height sweep, and common-mode current on the feed line.
@@ -59,13 +65,16 @@ It comes in two parts:
   are robust to build errors.
 
 **Matching**
-- Ideal L-network (both low-pass and high-pass solutions) for any NEC result or a typed R + jX.
+- Ideal L-network for any NEC result or a typed R + jX: every solution of both topologies (series or shunt branch
+  on the antenna side, up to four networks), with low-pass, high-pass or best-over-the-band selection.
 - Component losses from Q, capacitor ESL and coil stray capacitance.
-- Bandwidth sweep with commercial (E-series) values and worst-case component tolerances.
+- Bandwidth sweep with commercial (E-series) values and worst-case component tolerances (corners and edge
+  midpoints of the tolerance box).
 
 **Output**
 - A `.nec` deck, the nec2c `.out` result, and a JSON summary of the main results.
-- A Markdown/JSON **build sheet**: cut lengths, spacing, boom, phasing line, T-match and a tuning procedure.
+- A Markdown/JSON **build sheet**: cut lengths, spacing, boom, phasing line (total conductor length, connections
+  and crossing included), T-match, matching network (single-ended and balanced form) and a tuning procedure.
 - A CSV of every optimizer candidate and CSVs of frequency and matching sweeps.
 
 **GUI**
@@ -255,8 +264,8 @@ With the defaults this gives a classic 145 MHz HB9CV:
 
 ```
 Rear 1034.5 mm, front 958.6 mm, spacing 258.4 mm (0.125 λ)
-Gain 6.63 dBi (4.48 dBd), F/B 15.9 dB, HPBW 67° (azimuth)
-Zin 63.4 − 9.4j Ω, VSWR 1.34:1 vs 50 Ω, 2:1 bandwidth 143.5–149.0 MHz
+Gain 6.61 dBi (4.46 dBd), F/B 16.3 dB, HPBW 67° (azimuth)
+Zin 64.6 − 9.8j Ω, VSWR 1.36:1 vs 50 Ω, 2:1 bandwidth 143.5–149.0 MHz
 ```
 
 The **Copy cmd** button copies the equivalent command line.
@@ -349,8 +358,11 @@ The built-in help (`--help`, and the **?** badge next to each field in the GUI) 
   estimate the effect.
 - The boom is not modelled by default (insulating boom assumed). Use `--mount contact`, `--boom-isolated` or
   `--robustness` for a metal boom.
-- The thin-wire kernel is the default; the extended kernel (`--extended-kernel`) is opt-in. Every run is checked
-  against the NEC power budget, and unphysical results are rejected.
+- The kernel is chosen automatically (`--kernel auto`: extended thin-wire kernel when segments are shorter than 8
+  wire radii; `--kernel thin` / `--kernel extended` force one). Every run is checked against the NEC power budget,
+  and unphysical results are rejected.
+- The NEC values of the series capacitor, the T-match taps and the matching network carry the Zin uncertainty that
+  the convergence check reports; set them on the bench.
 - The matching network is a lumped, single-frequency design. Layout parasitics are only approximated (ESL, coil
   stray C).
 - The text printed by `hb9cv.py` (log, warnings, build sheet) is in English. The GUI is available in English,
