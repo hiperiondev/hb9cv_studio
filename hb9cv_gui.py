@@ -575,24 +575,24 @@ OPT_TR = {
                          ("Diagramma vs frequenza", "Con la scansione: guadagno / F/B / Zin in funzione della frequenza e CSV (richiede Esegui nec2c).")),
     "--fsweep-csv": (("CSV del barrido de frecuencia", ""), ("CSV scansione di frequenza", "")),
     # ---- Optimize
-    "--band": (("Banda FMIN,FMAX,N", "Puntúa cada candidato en toda la banda (peor caso)."),
-               ("Banda FMIN,FMAX,N", "Valuta ogni candidato sull'intera banda (caso peggiore).")),
-    "--refine": (("Rondas de refinamiento", "Rondas de búsqueda local tras la rejilla (0 = solo rejilla). Por defecto 6 con tl/lc, 8 con reflectores/directores."),
-                 ("Cicli di raffinamento", "Cicli di ricerca locale dopo la griglia (0 = solo griglia). Predefinito 6 con tl/lc, 8 con riflettori/direttori.")),
-    "--nm-evals": (("Simulaciones Nelder-Mead", "Presupuesto del pulido Nelder-Mead tras la búsqueda local (0 = desactivado)."),
-                   ("Simulazioni Nelder-Mead", "Budget della rifinitura Nelder-Mead dopo la ricerca locale (0 = disattivata).")),
-    "--pretune": (("Presintonizar longitud delantera", "Ajusta la longitud delantera para X_in ~ 0 en el puerto NEC (sin el condensador serie) antes de la rejilla (activado por defecto)."),
-                  ("Pre-sintonia lunghezza anteriore", "Regola la lunghezza anteriore per X_in ~ 0 alla porta NEC (senza il condensatore serie) prima della griglia (attivo per impostazione predefinita).")),
-    "--fb-metric": (("Métrica F/B", "F/B que usa la puntuación: point, sector (anillo) o cone (cualquier elevación)."),
-                    ("Metrica F/B", "F/B usato dal punteggio: point, sector (anello) o cone (qualsiasi elevazione).")),
+    "--band": (("Banda FMIN,FMAX,N", "Puntúa cada candidato en toda la banda (mínimo suave). Vacío: 3 puntos en la frecuencia ±0,7 %; none = una sola frecuencia."),
+               ("Banda FMIN,FMAX,N", "Valuta ogni candidato sull'intera banda (minimo morbido). Vuoto: 3 punti alla frequenza ±0,7 %; none = una sola frequenza.")),
+    "--refine": (("Rondas de búsqueda por patrones", "Máximo de rondas de la búsqueda por patrones tras la rejilla (por defecto 30; termina antes por tolerancia o presupuesto); 0 = sin ella."),
+                 ("Cicli di ricerca a pattern", "Massimo di cicli della ricerca a pattern dopo la griglia (predefinito 30; termina prima per tolleranza o budget); 0 = disattivata.")),
+    "--nm-evals": (("Simulaciones Nelder-Mead", "Candidatos del Nelder-Mead por punto de partida (por defecto 15 por variable; 0 = desactivado)."),
+                   ("Simulazioni Nelder-Mead", "Candidati del Nelder-Mead per punto di partenza (predefinito 15 per variabile; 0 = disattivato).")),
+    "--pretune": (("Presintonizar longitud delantera", "Ajusta la longitud delantera para X_in ~ 0 antes de la rejilla. Por defecto: solo sin la puntuación con red L."),
+                  ("Pre-sintonia lunghezza anteriore", "Regola la lunghezza anteriore per X_in ~ 0 prima della griglia. Predefinito: solo senza il punteggio con rete L.")),
+    "--fb-metric": (("Métrica F/B", "F/B que usa la puntuación: point, sector (anillo), cone (cualquier elevación, por defecto) o rear-avg (promedio de potencia del cono)."),
+                    ("Metrica F/B", "F/B usato dal punteggio: point, sector (anello), cone (qualsiasi elevazione, predefinito) o rear-avg (media di potenza del cono).")),
     "--jobs": (("Trabajos en paralelo", "Por defecto: número de CPU."), ("Processi in parallelo", "Predefinito: numero di CPU.")),
     "--csv": (("CSV de la exploración", ""), ("CSV della ricerca", "")),
     "--spacing-values": (("Valores de separación", "Longitudes de onda."), ("Valori di spaziatura", "Lunghezze d'onda.")),
     "--rear-length-values": (("Factores de longitud trasera", ""), ("Fattori di lunghezza posteriore", "")),
     "--front-length-values": (("Factores de longitud delantera", "Se recentran en la longitud delantera presintonizada."),
                               ("Fattori di lunghezza anteriore", "Ricentrati sulla lunghezza anteriore pre-sintonizzata.")),
-    "--line-offset-values": (("Desfases de línea (grados)", "Desviaciones respecto al centro de la exploración de línea: la línea sintetizada o la teórica (tl/lc)."),
-                             ("Offset della linea (gradi)", "Scostamenti rispetto al centro dell'esplorazione della linea: la linea sintetizzata o quella teorica (tl/lc).")),
+    "--line-offset-values": (("Desfases de línea (grados)", "Solo con 'Resolver la línea' desactivado: desviaciones respecto al centro de la exploración de línea (tl/lc)."),
+                             ("Offset della linea (gradi)", "Solo con 'Risolvere la linea' disattivato: scostamenti rispetto al centro dell'esplorazione della linea (tl/lc).")),
     "--line-length-values": (("Longitudes de línea (m)", "Sustituye los desfases."), ("Lunghezze della linea (m)", "Sostituisce gli offset.")),
     "--z0-values": (("Valores de Z0 (ohm)", "p. ej. 50,75,300"), ("Valori di Z0 (ohm)", "es. 50,75,300")),
     "--ratio-values": (("Relaciones de amplitud", "Solo red ideal."), ("Rapporti di ampiezza", "Solo rete ideale.")),
@@ -608,12 +608,12 @@ OPT_TR = {
     "--match-q-c": (("Red L: Q del condensador", "Q del condensador de la red L de puntuación."), ("Rete L: Q del condensatore", "Q del condensatore della rete L di valutazione.")),
     "--diameter-values": (("Diámetros de tubo (mm)", "Diámetros comerciales que recorre el refinamiento; 'any' = continuo."),
                           ("Diametri dei tubi (mm)", "Diametri commerciali percorsi dal raffinamento; 'any' = continuo.")),
-    "--tap-values": (("Tomas del T-match (mm)", "Distancias de toma exploradas por la rejilla (por defecto: la toma del T-match)."),
-                     ("Prese del T-match (mm)", "Distanze di presa esplorate dalla griglia (predefinito: la presa del T-match).")),
+    "--tap-values": (("Tomas del T-match (mm)", "Distancias de toma de la rejilla (iguales en ambos elementos; la búsqueda las mueve por separado)."),
+                     ("Prese del T-match (mm)", "Distanze di presa della griglia (uguali sui due elementi; la ricerca le sposta separatamente).")),
     "--feed-style": (("Tipo de alimentación", "tmatch (por defecto con tl/lc): T-match en ambos elementos activos, línea y alimentación en las barras. center: en los centros de los elementos."),
                      ("Tipo di alimentazione", "tmatch (predefinito con tl/lc): T-match su entrambi gli elementi attivi, linea e alimentazione sulle barre. center: ai centri degli elementi.")),
-    "--tap-mm": (("Toma del T-match (mm)", "Distancia del centro del elemento a cada toma (optimize la mueve)."),
-                 ("Presa del T-match (mm)", "Distanza dal centro dell'elemento a ciascuna presa (optimize la sposta).")),
+    "--tap-mm": (("Toma del T-match (mm)", "Distancia del centro del elemento a cada toma, en ambos elementos; optimize mueve la trasera y la delantera por separado."),
+                 ("Presa del T-match (mm)", "Distanza dal centro dell'elemento a ciascuna presa, su entrambi gli elementi; optimize sposta posteriore e anteriore separatamente.")),
     "--tap-offset-mm": (("Separación de la barra T (mm)", "Distancia del elemento a la barra T, hacia el otro elemento (barras más cercanas reducen la precisión de NEC)."),
                         ("Distanza della barra T (mm)", "Distanza dall'elemento alla barra T, verso l'altro elemento (barre più vicine riducono la precisione di NEC).")),
     "--tap-wire-mm": (("Hilo del T-match (mm)", "Diámetro de la barra T y de sus tramos (por defecto: el diámetro del elemento)."),
@@ -762,6 +762,51 @@ STR.update({
     "help.default": ("Default value: {d}", "Valor por defecto: {d}", "Valore predefinito: {d}"),
     "help.badge": ("Hover for help", "Pasa el ratón para ver la ayuda", "Passa il mouse per l'aiuto"),
 })
+OPT_TR.update({
+    "--tap-rear-mm": (("Toma trasera del T-match (mm)", "Distancia de la toma en el elemento trasero (por defecto la toma del T-match)."),
+                      ("Presa posteriore del T-match (mm)", "Distanza della presa sull'elemento posteriore (predefinito la presa del T-match).")),
+    "--tap-front-mm": (("Toma delantera del T-match (mm)", "Distancia de la toma en el elemento delantero (por defecto la toma del T-match)."),
+                       ("Presa anteriore del T-match (mm)", "Distanza della presa sull'elemento anteriore (predefinito la presa del T-match).")),
+    "--refine-evals": (("Simulaciones de la búsqueda por patrones", "Candidatos por punto de partida (por defecto 10 por variable)."),
+                       ("Simulazioni della ricerca a pattern", "Candidati per punto di partenza (predefinito 10 per variabile).")),
+    "--search": (("Búsqueda local", "pattern: búsqueda por patrones y Nelder-Mead; cmaes: CMA-ES con la población en paralelo."),
+                 ("Ricerca locale", "pattern: ricerca a pattern e Nelder-Mead; cmaes: CMA-ES con la popolazione in parallelo.")),
+    "--starts": (("Puntos de partida", "Mejores candidatos de cuencas distintas desde los que arranca la búsqueda local (por defecto 2)."),
+                 ("Punti di partenza", "Migliori candidati di bacini distinti da cui parte la ricerca locale (predefinito 2).")),
+    "--lhs": (("Muestras hipercubo latino", "Candidatos extra repartidos por todo el espacio de búsqueda (0 = ninguno)."),
+              ("Campioni ipercubo latino", "Candidati extra distribuiti su tutto lo spazio di ricerca (0 = nessuno).")),
+    "--fb-cap": (("Techo de F/B (dB)", "Techo suave de la F/B en la puntuación (por defecto 40; 0 = sin techo)."),
+                 ("Tetto F/B (dB)", "Tetto morbido dell'F/B nel punteggio (predefinito 40; 0 = senza tetto).")),
+    "--band-softness": (("Suavidad de la banda (dB)", "Mínimo suave sobre las frecuencias de la banda (por defecto 0,5; 0 = peor caso)."),
+                        ("Morbidezza della banda (dB)", "Minimo morbido sulle frequenze della banda (predefinito 0,5; 0 = caso peggiore).")),
+    "--min-fb": (("F/B mínima (dB)", "Restricción: F/B del peor punto de la banda de al menos este valor."),
+                 ("F/B minimo (dB)", "Vincolo: F/B del punto peggiore della banda di almeno questo valore.")),
+    "--min-gain": (("Ganancia mínima (dBi)", "Restricción: ganancia del peor punto de la banda de al menos este valor."),
+                   ("Guadagno minimo (dBi)", "Vincolo: guadagno del punto peggiore della banda di almeno questo valore.")),
+    "--q-weight": (("Peso de |X|/R (dB)", "dB de puntuación por unidad de |X_in|/R_in por encima de 2 (por defecto 0,2; 0 = desactivado)."),
+                   ("Peso di |X|/R (dB)", "dB di punteggio per unità di |X_in|/R_in oltre 2 (predefinito 0,2; 0 = disattivato).")),
+    "--inner-line": (("Resolver la línea", "Elige la línea de fase exacta de cada geometría con dos ejecuciones de sonda (por defecto activado)."),
+                     ("Risolvere la linea", "Sceglie la linea di fase esatta di ogni geometria con due esecuzioni di sonda (attivo per impostazione predefinita).")),
+    "--line-z0-range": (("Rango de Z0 de la línea (ohm)", "MIN,MAX: el Z0 de la línea abierta también se elige por geometría."),
+                        ("Intervallo di Z0 della linea (ohm)", "MIN,MAX: anche lo Z0 della linea aperta viene scelto per geometria.")),
+    "--tap-symmetric": (("Tomas simétricas", "La misma toma y la misma barra T en ambos elementos excitados."),
+                        ("Prese simmetriche", "La stessa presa e la stessa barra T su entrambi gli elementi alimentati.")),
+    "--tap-offset-rear-mm": (("Barra T trasera (mm)", "Separación de la barra T del elemento trasero (por defecto la separación de la barra T)."),
+                             ("Barra T posteriore (mm)", "Distanza della barra T dell'elemento posteriore (predefinito la distanza della barra T).")),
+    "--tap-offset-front-mm": (("Barra T delantera (mm)", "Separación de la barra T del elemento delantero (por defecto la separación de la barra T)."),
+                              ("Barra T anteriore (mm)", "Distanza della barra T dell'elemento anteriore (predefinito la distanza della barra T).")),
+    "--search-bars": (("Buscar separaciones de barra T", "Las separaciones de las barras T son variables de búsqueda (por defecto sí)."),
+                      ("Cercare distanze delle barre T", "Le distanze delle barre T sono variabili di ricerca (predefinito sì).")),
+    "--parasitic-inner": (("Parásitos en el modelo multipuerto", "Rondas del ajuste de longitudes de reflectores/directores con el modelo multipuerto (0 = desactivado)."),
+                          ("Parassiti sul modello multiporta", "Cicli di regolazione delle lunghezze di riflettori/direttori con il modello multiporta (0 = disattivato).")),
+    "--sensitivity": (("Sensibilidad a tolerancias", "Efecto de cada tolerancia de construcción sobre el mejor diseño."),
+                      ("Sensibilità alle tolleranze", "Effetto di ogni tolleranza di costruzione sul progetto migliore.")),
+    "--robust-inner": (("Línea robusta (muestras)", "Elige la línea por el percentil 10 sobre N tolerancias de línea, VF, Z0 y condensador (0 = nominal)."),
+                       ("Linea robusta (campioni)", "Sceglie la linea per il 10° percentile su N tolleranze di linea, VF, Z0 e condensatore (0 = nominale).")),
+    "--pareto": (("Compromiso ganancia/F/B", "Tabla de N puntos ganancia frente a F/B de la mejor geometría (0 = desactivado)."),
+                 ("Compromesso guadagno/F/B", "Tabella di N punti guadagno contro F/B della geometria migliore (0 = disattivato).")),
+})
+
 
 HELP = {
     "--freq": (
@@ -1017,25 +1062,25 @@ HELP = {
         "Nombre del archivo CSV que recibe el resumen del diagrama en función de la frecuencia. Si está vacío es <archivo de salida>_fsweep.csv. Solo se usa junto con el barrido de frecuencia y la opción de diagrama en función de la frecuencia.",
         "Nome del file CSV che riceve il riepilogo del diagramma in funzione della frequenza. Se vuoto è <file di uscita>_fsweep.csv. Usato solo insieme alla scansione di frequenza e all'opzione diagramma in funzione della frequenza."),
     "--band": (
-        "Scores every candidate at N evenly spaced frequencies, written FMIN,FMAX,N (for example 144,146,5), and keeps the worst case: the minimum over frequency of the objective minus the VSWR penalty. This favours designs that hold up across the whole band instead of one frequency. The geometry and line length stay fixed at the design frequency, which must lie inside the band and is always scored (it is added when it is not one of the N points). Empty means a single frequency. Costs N times more simulations.",
-        "Puntúa cada candidato en N frecuencias equiespaciadas, escritas FMIN,FMAX,N (por ejemplo 144,146,5), y conserva el peor caso: el mínimo en frecuencia del objetivo menos la penalización por VSWR. Favorece diseños que se mantienen en toda la banda en vez de a una sola frecuencia. La geometría y la longitud de línea siguen fijadas a la frecuencia de diseño, que debe estar dentro de la banda y siempre se puntúa (se añade si no es uno de los N puntos). Vacío significa una sola frecuencia. Cuesta N veces más simulaciones.",
-        "Valuta ogni candidato a N frequenze equispaziate, scritte FMIN,FMAX,N (per esempio 144,146,5), e conserva il caso peggiore: il minimo in frequenza dell'obiettivo meno la penalità VSWR. Favorisce progetti che reggono su tutta la banda invece che a una sola frequenza. Geometria e lunghezza della linea restano fissate alla frequenza di progetto, che deve stare dentro la banda ed è sempre valutata (viene aggiunta se non è uno degli N punti). Vuoto significa una sola frequenza. Costa N volte più simulazioni."),
+        "Scores every candidate at N evenly spaced frequencies, written FMIN,FMAX,N (for example 144,146,5), and keeps a smooth worst case: the smooth minimum over frequency of the objective (see 'Band softness') minus the VSWR and the other penalties. This favours designs that hold up across the whole band instead of one frequency. The geometry and line length stay fixed at the design frequency, which must lie inside the band and is always scored (it is added when it is not one of the N points). Empty: 3 points at the design frequency and +-0.7 % of it, so the score never rewards a null that exists at one frequency only; none: the design frequency alone.",
+        "Puntúa cada candidato en N frecuencias equiespaciadas, escritas FMIN,FMAX,N (por ejemplo 144,146,5), y conserva un peor caso suave: el mínimo suave en frecuencia del objetivo (ver 'Suavidad de la banda') menos la penalización por VSWR y las demás. Favorece diseños que se mantienen en toda la banda en vez de a una sola frecuencia. La geometría y la longitud de línea siguen fijadas a la frecuencia de diseño, que debe estar dentro de la banda y siempre se puntúa (se añade si no es uno de los N puntos). Vacío: 3 puntos en la frecuencia de diseño y a +-0,7 % de ella, para que la puntuación nunca premie un nulo que solo existe en una frecuencia; none: solo la frecuencia de diseño.",
+        "Valuta ogni candidato a N frequenze equispaziate, scritte FMIN,FMAX,N (per esempio 144,146,5), e conserva un caso peggiore morbido: il minimo morbido in frequenza dell'obiettivo (vedi 'Morbidezza della banda') meno la penalità VSWR e le altre. Favorisce progetti che reggono su tutta la banda invece che a una sola frequenza. Geometria e lunghezza della linea restano fissate alla frequenza di progetto, che deve stare dentro la banda ed è sempre valutata (viene aggiunta se non è uno degli N punti). Vuoto: 3 punti alla frequenza di progetto e a +-0,7 % da essa, così il punteggio non premia mai un nullo che esiste a una sola frequenza; none: solo la frequenza di progetto."),
     "--refine": (
-        "Rounds of local search after the grid scan. Each round simulates all small moves around the best point in parallel (element lengths, phase or line length and, if enabled, spacing and diameter), keeps the best improvement and halves the step when nothing improves. 0 means grid only. Empty uses the default: 6 rounds with the tl/lc networks, 8 with reflectors or directors, 0 with ideal sources. A Nelder-Mead polish follows (see Nelder-Mead runs).",
-        "Rondas de búsqueda local tras el barrido en rejilla. Cada ronda simula en paralelo todos los pequeños movimientos alrededor del mejor punto (longitudes de elementos, fase o longitud de línea y, si se activan, separación y diámetro), conserva la mejor mejora y reduce a la mitad el paso cuando nada mejora. 0 significa solo rejilla. Vacío usa el valor por defecto: 6 rondas con las redes tl/lc, 8 con reflectores o directores, 0 con fuentes ideales. Después sigue un pulido Nelder-Mead (ver Simulaciones Nelder-Mead).",
-        "Cicli di ricerca locale dopo la scansione a griglia. Ogni ciclo simula in parallelo tutte le piccole mosse intorno al punto migliore (lunghezze degli elementi, fase o lunghezza della linea e, se abilitati, spaziatura e diametro), conserva il miglior miglioramento e dimezza il passo quando nulla migliora. 0 significa solo griglia. Vuoto usa il valore predefinito: 6 cicli con le reti tl/lc, 8 con riflettori o direttori, 0 con sorgenti ideali. Segue una rifinitura Nelder-Mead (vedi Simulazioni Nelder-Mead)."),
+        "Maximum rounds of the coordinate pattern search that follows the grid (default 30). Each round simulates in parallel a step up and down of every search variable (element lengths, the rear and front T-match taps, spacing, element diameter, every reflector/director length and spacing, and the rear phase or the line when the line is not solved exactly), combines the improving moves of all variables into one point, and halves the step of each variable that improved in neither direction. It stops when every step is below its tolerance, when 'Pattern search runs' are spent or after these rounds. 0 turns it off. A Nelder-Mead search follows (see Nelder-Mead runs).",
+        "Máximo de rondas de la búsqueda por patrones en coordenadas que sigue a la rejilla (por defecto 30). Cada ronda simula en paralelo un paso arriba y abajo de cada variable de búsqueda (longitudes de los elementos, las tomas trasera y delantera del T-match, separación, diámetro, cada longitud y separación de reflectores/directores, y la fase trasera o la línea cuando la línea no se resuelve de forma exacta), combina en un punto los movimientos que mejoran de todas las variables y reduce a la mitad el paso de cada variable que no mejoró en ningún sentido. Termina cuando todos los pasos están por debajo de su tolerancia, cuando se agotan las 'Simulaciones de la búsqueda por patrones' o tras estas rondas. 0 la desactiva. Después sigue una búsqueda Nelder-Mead (ver Simulaciones Nelder-Mead).",
+        "Massimo di cicli della ricerca a pattern per coordinate che segue la griglia (predefinito 30). Ogni ciclo simula in parallelo un passo in su e in giù di ogni variabile di ricerca (lunghezze degli elementi, le prese posteriore e anteriore del T-match, spaziatura, diametro, ogni lunghezza e spaziatura di riflettori/direttori, e la fase posteriore o la linea quando la linea non è risolta in modo esatto), combina in un punto le mosse che migliorano di tutte le variabili e dimezza il passo di ogni variabile che non è migliorata in nessun verso. Termina quando tutti i passi sono sotto la loro tolleranza, quando le 'Simulazioni della ricerca a pattern' sono esaurite o dopo questi cicli. 0 la disattiva. Segue una ricerca Nelder-Mead (vedi Simulazioni Nelder-Mead)."),
     "--nm-evals": (
-        "Maximum number of nec2c runs of the Nelder-Mead polish that follows the local search (default 40; 0 turns it off). It moves the continuous parameters together (element lengths, spacing, line length or rear phase, diameter), so it can follow correlated changes such as a longer front element with a shorter line, which a one-axis-at-a-time search cannot.",
-        "Número máximo de ejecuciones de nec2c del pulido Nelder-Mead que sigue a la búsqueda local (por defecto 40; 0 lo desactiva). Mueve juntos los parámetros continuos (longitudes de elementos, separación, longitud de línea o fase trasera, diámetro), así que puede seguir cambios correlacionados como un elemento delantero más largo con una línea más corta, que una búsqueda de un eje cada vez no puede seguir.",
-        "Numero massimo di esecuzioni di nec2c della rifinitura Nelder-Mead che segue la ricerca locale (predefinito 40; 0 la disattiva). Muove insieme i parametri continui (lunghezze degli elementi, spaziatura, lunghezza della linea o fase posteriore, diametro), quindi può seguire cambiamenti correlati come un elemento anteriore più lungo con una linea più corta, che una ricerca un asse alla volta non può seguire."),
+        "Maximum number of candidates (nec2c simulations) of the Nelder-Mead search that follows the pattern search, per starting point. Empty: 15 per search variable; 0 turns it off. It moves every continuous variable together in a box normalized to 0..1, with coefficients adapted to the number of variables and one restart after convergence, so it follows correlated moves (front length against taps and spacing, the parasitic elements against each other) that a one-variable-at-a-time search cannot.",
+        "Número máximo de candidatos (simulaciones de nec2c) de la búsqueda Nelder-Mead que sigue a la búsqueda por patrones, por punto de partida. Vacío: 15 por variable de búsqueda; 0 la desactiva. Mueve juntas todas las variables continuas en una caja normalizada a 0..1, con coeficientes adaptados al número de variables y un reinicio tras converger, de modo que sigue movimientos correlacionados (longitud delantera frente a tomas y separación, los elementos parásitos entre sí) que una búsqueda variable por variable no puede seguir.",
+        "Numero massimo di candidati (simulazioni di nec2c) della ricerca Nelder-Mead che segue la ricerca a pattern, per punto di partenza. Vuoto: 15 per variabile di ricerca; 0 la disattiva. Muove insieme tutte le variabili continue in una scatola normalizzata a 0..1, con coefficienti adattati al numero di variabili e un riavvio dopo la convergenza, così segue mosse correlate (lunghezza anteriore contro prese e spaziatura, gli elementi parassiti tra loro) che una ricerca una variabile alla volta non può seguire."),
     "--pretune": (
-        "With the tl/lc networks, before the grid the front element length of the central candidate is tuned for an input reactance near zero at the NEC port (without the series capacitor) at the design frequency (a secant search of up to six nec2c runs), and the front-length grid is re-centred on that value. 1 % of element length moves the resonance by about 1 % of frequency, so a grid that starts detuned wastes most of its points. Default on.",
-        "Con las redes tl/lc, antes de la rejilla se ajusta la longitud del elemento delantero del candidato central para que la reactancia de entrada en el puerto NEC (sin el condensador serie) sea casi cero a la frecuencia de diseño (búsqueda por secante de hasta seis ejecuciones de nec2c), y la rejilla de longitudes delanteras se recentra en ese valor. Un 1 % de longitud mueve la resonancia alrededor de un 1 % de frecuencia, así que una rejilla que empieza desintonizada desperdicia la mayoría de sus puntos. Activado por defecto.",
-        "Con le reti tl/lc, prima della griglia la lunghezza dell'elemento anteriore del candidato centrale viene regolata per una reattanza d'ingresso vicina a zero alla porta NEC (senza il condensatore serie) alla frequenza di progetto (ricerca a secante di al massimo sei esecuzioni di nec2c) e la griglia delle lunghezze anteriori viene ricentrata su quel valore. L'1 % di lunghezza sposta la risonanza di circa l'1 % in frequenza, quindi una griglia che parte disaccordata spreca la maggior parte dei punti. Attivo per impostazione predefinita."),
+        "With the tl/lc networks, before the grid the front element length of the central candidate is tuned for an input reactance near zero at the NEC port (without the series capacitor) at the design frequency, and the front-length grid is centred on it. Default: on only when the score does not go through the L-network (a direct feed needs X_in near zero); with the L-network score the network absorbs X_in and the front length is left free to shape the pattern. yes / no force it.",
+        "Con las redes tl/lc, antes de la rejilla se ajusta la longitud del elemento delantero del candidato central para una reactancia de entrada casi nula en el puerto NEC (sin el condensador serie) a la frecuencia de diseño, y la rejilla de longitudes delanteras se centra en ella. Por defecto: solo cuando la puntuación no pasa por la red L (una alimentación directa necesita X_in casi nula); con la puntuación con red L la red absorbe X_in y la longitud delantera queda libre para dar forma al diagrama. yes / no la fuerzan.",
+        "Con le reti tl/lc, prima della griglia la lunghezza dell'elemento anteriore del candidato centrale viene regolata per una reattanza d'ingresso quasi nulla alla porta NEC (senza il condensatore serie) alla frequenza di progetto, e la griglia delle lunghezze anteriori viene centrata su di essa. Predefinito: solo quando il punteggio non passa per la rete L (un'alimentazione diretta richiede X_in quasi nulla); con il punteggio con rete L la rete assorbe X_in e la lunghezza anteriore resta libera di dare forma al diagramma. yes / no la forzano."),
     "--fb-metric": (
-        "Which front-to-back ratio the front-back and balance objectives (and the Monte-Carlo) use. point: forward gain minus the gain at exactly 180 degrees on the ring. sector: forward gain minus the worst point of the rear sector on the ring (default). cone: forward gain minus the worst direction within the sector half-angle of the back direction at any elevation, taken from a 5 degree rear half-sphere grid; it catches rear lobes above or below the ring.",
-        "Qué relación delante-detrás usan los objetivos front-back y balance (y el Monte Carlo). point: ganancia delantera menos la ganancia exactamente a 180 grados en el anillo. sector: ganancia delantera menos el peor punto del sector trasero en el anillo (por defecto). cone: ganancia delantera menos la peor dirección dentro del semiángulo del sector alrededor de la dirección trasera, a cualquier elevación, tomada de una rejilla de 5 grados de la semiesfera trasera; detecta lóbulos traseros por encima o por debajo del anillo.",
-        "Quale rapporto avanti-indietro usano gli obiettivi front-back e balance (e il Monte Carlo). point: guadagno anteriore meno il guadagno esattamente a 180 gradi sull'anello. sector: guadagno anteriore meno il punto peggiore del settore posteriore sull'anello (predefinito). cone: guadagno anteriore meno la direzione peggiore entro il semiangolo del settore attorno alla direzione posteriore, a qualsiasi elevazione, presa da una griglia di 5 gradi della semisfera posteriore; rileva lobi posteriori sopra o sotto l'anello."),
+        "Which front-to-back ratio the front-back and balance objectives (and the Monte-Carlo) use. point: forward gain minus the gain at exactly 180 degrees on the ring. sector: forward gain minus the worst point of the rear sector on the ring. cone (default): forward gain minus the worst direction within the sector half-angle of the back direction at any elevation, from a 5 degree rear half-sphere grid and a 2 degree grid over the cone; it catches rear lobes above or below the ring. rear-avg: forward gain minus the power average of that cone weighted by solid angle, a smooth front-to-rear ratio that does not reward a narrow null.",
+        "Qué relación delante-detrás usan los objetivos front-back y balance (y el Monte Carlo). point: ganancia delantera menos la ganancia exactamente a 180 grados en el anillo. sector: ganancia delantera menos el peor punto del sector trasero en el anillo. cone (por defecto): ganancia delantera menos la peor dirección dentro del semiángulo del sector alrededor de la dirección trasera a cualquier elevación, de una rejilla de 5 grados de la semiesfera trasera y otra de 2 grados sobre el cono; detecta lóbulos traseros por encima o por debajo del anillo. rear-avg: ganancia delantera menos el promedio de potencia de ese cono ponderado por ángulo sólido, una relación delante-atrás suave que no premia un nulo estrecho.",
+        "Quale rapporto avanti-indietro usano gli obiettivi front-back e balance (e il Monte Carlo). point: guadagno anteriore meno il guadagno esattamente a 180 gradi sull'anello. sector: guadagno anteriore meno il punto peggiore del settore posteriore sull'anello. cone (predefinito): guadagno anteriore meno la direzione peggiore entro il semiangolo del settore attorno alla direzione posteriore a qualsiasi elevazione, da una griglia di 5 gradi della semisfera posteriore e una di 2 gradi sul cono; rileva lobi posteriori sopra o sotto l'anello. rear-avg: guadagno anteriore meno la media di potenza di quel cono pesata per angolo solido, un rapporto avanti-retro morbido che non premia un nullo stretto."),
     "--jobs": (
         "Number of nec2c processes run in parallel while scoring candidates. By default it equals the number of CPU cores. Lower it if the computer becomes unresponsive; raising it above the core count rarely helps.",
         "Número de procesos nec2c que se ejecutan en paralelo al puntuar candidatos. Por defecto es el número de núcleos de la CPU. Redúcelo si el equipo deja de responder; subirlo por encima del número de núcleos rara vez ayuda.",
@@ -1057,9 +1102,9 @@ HELP = {
         "Lista de factores de longitud del elemento delantero que se exploran, relativos a 139/f metros (por defecto 0.98,1.0,1.02). Con la presintonía activada, la lista se desplaza para que su valor central sea la longitud delantera ajustada. Se combina con las demás listas, así que el número de simulaciones es el producto de los tamaños de las listas.",
         "Elenco dei fattori di lunghezza dell'elemento anteriore da esplorare, relativi a 139/f metri (predefinito 0.98,1.0,1.02). Con la pre-sintonia attiva, l'elenco viene spostato in modo che il valore centrale sia la lunghezza anteriore regolata. Combinato con gli altri elenchi, quindi il numero di simulazioni è il prodotto delle dimensioni degli elenchi."),
     "--line-offset-values": (
-        "Offsets in electrical degrees, added to the centre of the line scan of each spacing (the synthesized line, or the theoretical one without synthesis, moved up when the lowest offset would fall below the shortest buildable line), that the optimizer tries with the tl and lc networks (default -30 to +30 in 5 degree steps). Values outside the buildable range are dropped, never wrapped around 360. Replaced by 'Line lengths' if that is given.",
-        "Desfases en grados eléctricos, sumados al centro de la exploración de línea de cada separación (la línea sintetizada, o la teórica sin síntesis, desplazado hacia arriba si el desfase menor quedara por debajo de la línea más corta construible), que el optimizador prueba con las redes tl y lc (por defecto de -30 a +30 en pasos de 5 grados). Los valores fuera del rango construible se descartan, nunca se dan la vuelta en 360. Se sustituye por 'Longitudes de línea' si se indica.",
-        "Offset in gradi elettrici, sommati al centro dell'esplorazione della linea di ogni spaziatura (la linea sintetizzata, o quella teorica senza sintesi, spostato in alto se l'offset minore cadesse sotto la linea più corta costruibile), che l'ottimizzatore prova con le reti tl e lc (predefinito da -30 a +30 a passi di 5 gradi). I valori fuori dall'intervallo costruibile sono scartati, mai riportati attorno a 360. Sostituito da 'Lunghezze della linea' se indicato."),
+        "Only with 'Solve the line' off: offsets in electrical degrees, added to the centre of the line scan of each spacing (the synthesized line, or the theoretical one without synthesis), that the optimizer tries with the tl and lc networks (default -30 to +30 in 5 degree steps). Values outside the buildable range are moved to its limits and repeated values merged, never wrapped around 360. Replaced by 'Line lengths' if that is given.",
+        "Solo con 'Resolver la línea' desactivado: desfases en grados eléctricos, sumados al centro de la exploración de línea de cada separación (la línea sintetizada, o la teórica sin síntesis), que el optimizador prueba con las redes tl y lc (por defecto de -30 a +30 en pasos de 5 grados). Los valores fuera del rango construible se llevan a sus límites y los repetidos se unen, nunca se dan la vuelta en 360. Se sustituye por 'Longitudes de línea' si se indica.",
+        "Solo con 'Risolvere la linea' disattivato: offset in gradi elettrici, sommati al centro dell'esplorazione della linea di ogni spaziatura (la linea sintetizzata, o quella teorica senza sintesi), che l'ottimizzatore prova con le reti tl e lc (predefinito da -30 a +30 a passi di 5 gradi). I valori fuori dall'intervallo costruibile vengono portati ai suoi limiti e i ripetuti uniti, mai riportati attorno a 360. Sostituito da 'Lunghezze della linea' se indicato."),
     "--line-length-values": (
         "Absolute physical line lengths in metres to scan. If given, it replaces the list of degree offsets. Useful when the cable length is the quantity you actually cut.",
         "Longitudes físicas absolutas de línea en metros que se exploran. Si se indica, sustituye la lista de desfases en grados. Útil cuando la longitud del cable es la magnitud que realmente se corta.",
@@ -1341,13 +1386,13 @@ HELP.update({
         "Longitud del boom en mm más allá de los elementos exteriores en cada extremo (por defecto 50). Con reflectores o directores el boom modelado es el mayor entre --boom-length y la distancia entre todos los elementos más dos veces este sobrante; la hoja de construcción da las posiciones de los elementos desde el extremo trasero de ese boom.",
         "Lunghezza del boom in mm oltre gli elementi esterni a ciascuna estremità (predefinito 50). Con riflettori o direttori il boom modellato è il maggiore tra --boom-length e l'estensione di tutti gli elementi più due volte questa sporgenza; il foglio di costruzione dà le posizioni degli elementi dall'estremità posteriore di quel boom."),
     "--tap-mm": (
-        "T-match feed: distance in mm from the element centre to each tap, the point where a stub joins the element (default 120). The same value is used on both driven elements. Larger taps raise the impedance seen at the bar centre and change the phase relation of the element currents; optimize moves the tap in 10 mm steps (and scans --tap-values in the grid). The tap must stay at least 1.5 segments from the centre and one segment from the tip.",
-        "Alimentación T-match: distancia en mm del centro del elemento a cada toma, el punto donde un brazo se une al elemento (por defecto 120). Se usa el mismo valor en los dos elementos excitados. Tomas más alejadas elevan la impedancia vista en el centro de la barra y cambian la relación de fase de las corrientes; optimize mueve la toma en pasos de 10 mm (y recorre --tap-values en la rejilla). La toma debe quedar al menos a 1,5 segmentos del centro y a un segmento de la punta.",
-        "Alimentazione T-match: distanza in mm dal centro dell'elemento a ciascuna presa, il punto in cui un braccio si unisce all'elemento (predefinito 120). Lo stesso valore vale per entrambi gli elementi alimentati. Prese più lontane alzano l'impedenza vista al centro della barra e cambiano la relazione di fase delle correnti; optimize sposta la presa a passi di 10 mm (e percorre --tap-values nella griglia). La presa deve restare almeno a 1,5 segmenti dal centro e a un segmento dalla punta."),
+        "T-match feed: distance in mm from the element centre to each tap, the point where a stub joins the element (default 120), on both driven elements unless the rear or front tap is given. Larger taps raise the impedance seen at the bar centre and change the amplitude and phase relation of the element currents; optimize starts from this value and moves the rear and front taps separately (one tap for both with 'Symmetric taps'), and scans --tap-values in the grid. A tap must stay at least 1.5 segments from the centre and one segment from the tip.",
+        "Alimentación T-match: distancia en mm del centro del elemento a cada toma, el punto donde un brazo se une al elemento (por defecto 120), en los dos elementos excitados salvo que se indique la toma trasera o la delantera. Tomas más alejadas elevan la impedancia vista en el centro de la barra y cambian la relación de amplitud y fase de las corrientes; optimize parte de este valor y mueve por separado las tomas trasera y delantera (una sola para ambos con 'Tomas simétricas'), y recorre --tap-values en la rejilla. Una toma debe quedar al menos a 1,5 segmentos del centro y a un segmento de la punta.",
+        "Alimentazione T-match: distanza in mm dal centro dell'elemento a ciascuna presa, il punto in cui un braccio si unisce all'elemento (predefinito 120), su entrambi gli elementi alimentati salvo che si indichi la presa posteriore o anteriore. Prese più lontane alzano l'impedenza vista al centro della barra e cambiano la relazione di ampiezza e fase delle correnti; optimize parte da questo valore e sposta separatamente le prese posteriore e anteriore (una sola per entrambi con 'Prese simmetriche'), e percorre --tap-values nella griglia. Una presa deve restare almeno a 1,5 segmenti dal centro e a un segmento dalla punta."),
     "--tap-offset-mm": (
-        "T-match feed: distance in mm from the element axis to the T-bar, on the side facing the other element (default 50). The phase line runs between the two bar centres, so a larger offset shortens the straight distance it has to span. NEC-2 loses accuracy as the bar comes closer than about 5 element diameters; check the average gain test.",
-        "Alimentación T-match: distancia en mm del eje del elemento a la barra T, del lado que mira al otro elemento (por defecto 50). La línea de fase va entre los centros de las dos barras, así que una separación mayor acorta la distancia recta que debe cubrir. NEC-2 pierde precisión cuando la barra se acerca a menos de unos 5 diámetros del elemento; comprueba la prueba de ganancia media.",
-        "Alimentazione T-match: distanza in mm dall'asse dell'elemento alla barra T, sul lato rivolto all'altro elemento (predefinito 50). La linea di fase corre tra i centri delle due barre, quindi una distanza maggiore accorcia il tratto rettilineo da coprire. NEC-2 perde precisione quando la barra si avvicina a meno di circa 5 diametri dell'elemento; controlla il test del guadagno medio."),
+        "T-match feed: distance in mm from the element axis to the T-bar, on the side facing the other element (default 50), on both driven elements unless the rear or front T-bar offset is given. The phase line runs between the two bar centres, so a larger offset shortens the straight distance it has to span. NEC-2 loses accuracy as the bar comes closer than about 5 element diameters; check the average gain test. optimize starts from this value and moves the rear and front bars separately (see 'Search T-bar offsets').",
+        "Alimentación T-match: distancia en mm del eje del elemento a la barra T, del lado que mira al otro elemento (por defecto 50), en los dos elementos excitados salvo que se indique la separación trasera o delantera. La línea de fase va entre los centros de las dos barras, así que una separación mayor acorta la distancia recta que debe cubrir. NEC-2 pierde precisión cuando la barra se acerca a menos de unos 5 diámetros del elemento; comprueba la prueba de ganancia media. optimize parte de este valor y mueve por separado las barras trasera y delantera (ver 'Buscar separaciones de barra T').",
+        "Alimentazione T-match: distanza in mm dall'asse dell'elemento alla barra T, sul lato rivolto all'altro elemento (predefinito 50), su entrambi gli elementi alimentati salvo che si indichi la distanza posteriore o anteriore. La linea di fase corre tra i centri delle due barre, quindi una distanza maggiore accorcia il tratto rettilineo da coprire. NEC-2 perde precisione quando la barra si avvicina a meno di circa 5 diametri dell'elemento; controlla il test del guadagno medio. optimize parte da questo valore e sposta separatamente le barre posteriore e anteriore (vedi 'Cercare distanze delle barre T')."),
     "--tap-wire-mm": (
         "T-match feed: diameter in mm of the T-bar and its two stubs. Empty: the element diameter, which is the most accurate choice in NEC-2 (junctions of unequal radii lower the accuracy; a thin bar on a thick element can make the average gain test fail).",
         "Alimentación T-match: diámetro en mm de la barra T y de sus dos brazos. Vacío: el diámetro del elemento, que es la opción más precisa en NEC-2 (las uniones de radios distintos reducen la precisión; una barra fina sobre un elemento grueso puede hacer fallar la prueba de ganancia media).",
@@ -1377,9 +1422,96 @@ HELP.update({
         "Con la puntuación adaptada: factor de calidad Q del condensador de la red en L ideal (por defecto 500, un buen trimmer de aire o PTFE). Su ESR = |X|/Q se incluye en la pérdida de la red de cada candidato.",
         "Con il punteggio adattato: fattore di merito Q del condensatore della rete a L ideale (predefinito 500, un buon compensatore ad aria o in PTFE). La sua ESR = |X|/Q è inclusa nella perdita della rete di ogni candidato."),
     "--tap-values": (
-        "T-match feed: tap distances in mm scanned by the grid, comma-separated (e.g. 100,120,140). Empty: only --tap-mm. Each value multiplies the number of grid candidates and gets its own synthesized phase line; the refinement then moves the tap of the best candidate in 10 mm steps.",
-        "Alimentación T-match: distancias de toma en mm que recorre la rejilla, separadas por comas (p. ej. 100,120,140). Vacío: solo --tap-mm. Cada valor multiplica el número de candidatos de la rejilla y tiene su propia línea de fase sintetizada; después el refinamiento mueve la toma del mejor candidato en pasos de 10 mm.",
-        "Alimentazione T-match: distanze delle prese in mm percorse dalla griglia, separate da virgole (es. 100,120,140). Vuoto: solo --tap-mm. Ogni valore moltiplica il numero di candidati della griglia e ha la propria linea di fase sintetizzata; poi il raffinamento sposta la presa del miglior candidato a passi di 10 mm."),
+        "T-match feed: tap distances in mm scanned by the grid, comma-separated (e.g. 100,120,140), the same on both elements. Empty: only --tap-mm. Each value multiplies the number of grid candidates; the local search then moves the rear and front taps of the best candidates separately.",
+        "Alimentación T-match: distancias de toma en mm que recorre la rejilla, separadas por comas (p. ej. 100,120,140), iguales en ambos elementos. Vacío: solo --tap-mm. Cada valor multiplica el número de candidatos de la rejilla; después la búsqueda local mueve por separado las tomas trasera y delantera de los mejores candidatos.",
+        "Alimentazione T-match: distanze delle prese in mm percorse dalla griglia, separate da virgole (es. 100,120,140), uguali sui due elementi. Vuoto: solo --tap-mm. Ogni valore moltiplica il numero di candidati della griglia; poi la ricerca locale sposta separatamente le prese posteriore e anteriore dei migliori candidati."),
+})
+
+HELP.update({
+    "--tap-rear-mm": (
+        "T-match feed: distance in mm from the rear element centre to its taps. Empty: the T-match tap. The rear and front taps set the amplitude and phase relation of the element currents together with the phase line, so a design from optimize usually has two different taps.",
+        "Alimentación T-match: distancia en mm del centro del elemento trasero a sus tomas. Vacío: la toma del T-match. Las tomas trasera y delantera fijan, junto con la línea de fase, la relación de amplitud y fase de las corrientes de los elementos, por lo que un diseño de optimize suele tener dos tomas distintas.",
+        "Alimentazione T-match: distanza in mm dal centro dell'elemento posteriore alle sue prese. Vuoto: la presa del T-match. Le prese posteriore e anteriore fissano, insieme alla linea di fase, la relazione di ampiezza e fase delle correnti degli elementi, quindi un progetto di optimize di solito ha due prese diverse."),
+    "--tap-front-mm": (
+        "T-match feed: distance in mm from the front element centre to its taps. Empty: the T-match tap.",
+        "Alimentación T-match: distancia en mm del centro del elemento delantero a sus tomas. Vacío: la toma del T-match.",
+        "Alimentazione T-match: distanza in mm dal centro dell'elemento anteriore alle sue prese. Vuoto: la presa del T-match."),
+    "--refine-evals": (
+        "Maximum number of candidates (nec2c simulations) of the pattern search per starting point. Empty: 10 per search variable.",
+        "Número máximo de candidatos (simulaciones de nec2c) de la búsqueda por patrones por punto de partida. Vacío: 10 por variable de búsqueda.",
+        "Numero massimo di candidati (simulazioni di nec2c) della ricerca a pattern per punto di partenza. Vuoto: 10 per variabile di ricerca."),
+    "--search": (
+        "Local search after the grid. pattern (default): the coordinate pattern search followed by the Nelder-Mead search. cmaes: the CMA-ES evolution strategy on the normalized variables; it evaluates a whole population at once, so it uses every parallel job, and copes well with many variables (reflectors and directors). Its budget is the sum of the pattern-search and Nelder-Mead runs.",
+        "Búsqueda local tras la rejilla. pattern (por defecto): la búsqueda por patrones seguida de la búsqueda Nelder-Mead. cmaes: la estrategia evolutiva CMA-ES sobre las variables normalizadas; evalúa una población entera a la vez, así que usa todos los trabajos en paralelo, y se comporta bien con muchas variables (reflectores y directores). Su presupuesto es la suma de las simulaciones de la búsqueda por patrones y de Nelder-Mead.",
+        "Ricerca locale dopo la griglia. pattern (predefinito): la ricerca a pattern seguita dalla ricerca Nelder-Mead. cmaes: la strategia evolutiva CMA-ES sulle variabili normalizzate; valuta un'intera popolazione alla volta, quindi usa tutti i processi in parallelo, e si comporta bene con molte variabili (riflettori e direttori). Il suo budget è la somma delle simulazioni della ricerca a pattern e di Nelder-Mead."),
+    "--starts": (
+        "Number of starting points of the local search (default 2): the best candidates of the grid that lie in distinct basins (no two closer than 8 % of the search box). Several starts avoid ending in the first local optimum found.",
+        "Número de puntos de partida de la búsqueda local (por defecto 2): los mejores candidatos de la rejilla que están en cuencas distintas (ninguno a menos del 8 % de la caja de búsqueda de otro). Varios puntos evitan terminar en el primer óptimo local encontrado.",
+        "Numero di punti di partenza della ricerca locale (predefinito 2): i migliori candidati della griglia che stanno in bacini distinti (nessuno a meno dell'8 % della scatola di ricerca da un altro). Più punti evitano di finire nel primo ottimo locale trovato."),
+    "--lhs": (
+        "Adds this many Latin-hypercube candidates spread over the whole search box (element lengths, taps, spacing, diameter, parasitic elements) to the grid, so the starting points come from a wider region than the grid lists. 0 (default) = none.",
+        "Añade a la rejilla este número de candidatos de hipercubo latino repartidos por toda la caja de búsqueda (longitudes, tomas, separación, diámetro, elementos parásitos), de modo que los puntos de partida salen de una región más amplia que las listas de la rejilla. 0 (por defecto) = ninguno.",
+        "Aggiunge alla griglia questo numero di candidati a ipercubo latino distribuiti su tutta la scatola di ricerca (lunghezze, prese, spaziatura, diametro, elementi parassiti), così i punti di partenza vengono da una regione più ampia delle liste della griglia. 0 (predefinito) = nessuno."),
+    "--fb-cap": (
+        "Ceiling in dB of the F/B in the score: F/B_eff = -10 log10(10^(-F/B/10) + 10^(-cap/10)). Below the ceiling the F/B counts almost fully; above it a deeper null adds almost nothing, so the optimizer does not give away gain or bandwidth for a null that a real antenna (mast, feed line, build tolerances) never shows. Default 40; 0 = no ceiling. The reported F/B values are not capped.",
+        "Techo en dB de la F/B en la puntuación: F/B_ef = -10 log10(10^(-F/B/10) + 10^(-techo/10)). Por debajo del techo la F/B cuenta casi entera; por encima, un nulo más profundo casi no suma, así que el optimizador no cede ganancia ni ancho de banda por un nulo que una antena real (mástil, línea de alimentación, tolerancias) nunca muestra. Por defecto 40; 0 = sin techo. Las F/B informadas no se recortan.",
+        "Tetto in dB dell'F/B nel punteggio: F/B_eff = -10 log10(10^(-F/B/10) + 10^(-tetto/10)). Sotto il tetto l'F/B conta quasi per intero; sopra, un nullo più profondo non aggiunge quasi nulla, così l'ottimizzatore non cede guadagno né banda per un nullo che un'antenna reale (palo, linea di alimentazione, tolleranze) non mostra mai. Predefinito 40; 0 = senza tetto. Gli F/B riportati non vengono limitati."),
+    "--band-softness": (
+        "Temperature in dB of the smooth minimum over the band frequencies: -t ln(mean(exp(-(term - min)/t))) above the minimum. A smooth worst case lets the searches follow the trade-off between band edges instead of stalling on the corner where two frequencies are equally bad. Default 0.5; 0 = the plain worst case.",
+        "Temperatura en dB del mínimo suave sobre las frecuencias de la banda. Un peor caso suave permite a las búsquedas seguir el compromiso entre los extremos de la banda en lugar de atascarse en la esquina donde dos frecuencias son igual de malas. Por defecto 0,5; 0 = el peor caso puro.",
+        "Temperatura in dB del minimo morbido sulle frequenze della banda. Un caso peggiore morbido permette alle ricerche di seguire il compromesso tra gli estremi della banda invece di bloccarsi nell'angolo dove due frequenze sono ugualmente cattive. Predefinito 0,5; 0 = il caso peggiore puro."),
+    "--min-fb": (
+        "Constraint: worst-band F/B (the selected F/B metric) of at least this value in dB. Each dB short costs 10 dB of score per dB squared. Typical use: objective gain with a minimum F/B, e.g. 20 dB.",
+        "Restricción: F/B del peor punto de la banda (la métrica F/B elegida) de al menos este valor en dB. Cada dB que falta cuesta 10 dB de puntuación por dB al cuadrado. Uso típico: objetivo gain con una F/B mínima, p. ej. 20 dB.",
+        "Vincolo: F/B del punto peggiore della banda (la metrica F/B scelta) di almeno questo valore in dB. Ogni dB mancante costa 10 dB di punteggio per dB al quadrato. Uso tipico: obiettivo gain con un F/B minimo, es. 20 dB."),
+    "--min-gain": (
+        "Constraint: worst-band gain (the gain the objective uses: after the L-network with the matched score) of at least this value in dBi, with the same penalty as the minimum F/B. Typical use: objective front-back with a minimum gain.",
+        "Restricción: ganancia del peor punto de la banda (la que usa el objetivo: tras la red L con la puntuación adaptada) de al menos este valor en dBi, con la misma penalización que la F/B mínima. Uso típico: objetivo front-back con una ganancia mínima.",
+        "Vincolo: guadagno del punto peggiore della banda (quello usato dall'obiettivo: dopo la rete L con il punteggio adattato) di almeno questo valore in dBi, con la stessa penalità dell'F/B minimo. Uso tipico: obiettivo front-back con un guadagno minimo."),
+    "--q-weight": (
+        "With the tl/lc networks: dB of score per unit of |X_in|/R_in above 2 at the design frequency. A very reactive input needs a high-Q matching network whose bandwidth is narrow and whose losses grow with the component tolerances; this term prefers inputs that are easy to match. Default 0.2; 0 = off.",
+        "Con las redes tl/lc: dB de puntuación por unidad de |X_in|/R_in por encima de 2 a la frecuencia de diseño. Una entrada muy reactiva necesita una red de adaptación de Q alto, de ancho de banda estrecho y con pérdidas que crecen con las tolerancias; este término prefiere entradas fáciles de adaptar. Por defecto 0,2; 0 = desactivado.",
+        "Con le reti tl/lc: dB di punteggio per unità di |X_in|/R_in oltre 2 alla frequenza di progetto. Un ingresso molto reattivo richiede una rete di adattamento ad alto Q, a banda stretta e con perdite che crescono con le tolleranze; questo termine preferisce ingressi facili da adattare. Predefinito 0,2; 0 = disattivato."),
+    "--inner-line": (
+        "With the tl/lc networks: the phase line of every candidate geometry is solved exactly instead of being scanned. Two probe runs (1 V on each feed port, over all the scored frequencies) give the pattern and the input impedance of the antenna for any line; the line (and, with a Z0 range, its impedance) that maximizes the score is chosen, and the results of the candidate come from those superposed fields, which are exact for the linear model (the final model is simulated in full as a check). Default yes; no scans the line offsets instead.",
+        "Con las redes tl/lc: la línea de fase de cada geometría candidata se resuelve de forma exacta en lugar de explorarse. Dos ejecuciones de sonda (1 V en cada puerto de alimentación, en todas las frecuencias puntuadas) dan el diagrama y la impedancia de entrada de la antena para cualquier línea; se elige la línea (y, con un rango de Z0, su impedancia) que maximiza la puntuación, y los resultados del candidato salen de esos campos superpuestos, exactos para el modelo lineal (el modelo final se simula completo como comprobación). Por defecto yes; no explora los desfases de línea.",
+        "Con le reti tl/lc: la linea di fase di ogni geometria candidata viene risolta in modo esatto invece di essere esplorata. Due esecuzioni di sonda (1 V su ciascuna porta di alimentazione, su tutte le frequenze valutate) danno il diagramma e l'impedenza d'ingresso dell'antenna per qualsiasi linea; si sceglie la linea (e, con un intervallo di Z0, la sua impedenza) che massimizza il punteggio, e i risultati del candidato vengono da quei campi sovrapposti, esatti per il modello lineare (il modello finale viene simulato per intero come verifica). Predefinito yes; no esplora gli offset della linea."),
+    "--line-z0-range": (
+        "Open-wire line with the line solved exactly: MIN,MAX in ohm. The Z0 of the phase line is chosen per geometry inside this range together with its length (the wire spacing follows from Z0 and the line wire diameter). With Z0 free a single line can set both the amplitude and the phase of the far element current; the probe fields also give the Z0 and length of an exact rear null (column null_line of the CSV). Empty: the Z0 of the line geometry.",
+        "Línea abierta con la línea resuelta de forma exacta: MIN,MAX en ohm. El Z0 de la línea de fase se elige por geometría dentro de este rango junto con su longitud (la separación de los hilos sale de Z0 y del diámetro del hilo de la línea). Con Z0 libre una sola línea puede fijar la amplitud y la fase de la corriente del elemento lejano; los campos de sonda también dan el Z0 y la longitud de un nulo trasero exacto (columna null_line del CSV). Vacío: el Z0 de la geometría de la línea.",
+        "Linea aperta con la linea risolta in modo esatto: MIN,MAX in ohm. Lo Z0 della linea di fase viene scelto per geometria in questo intervallo insieme alla sua lunghezza (la spaziatura dei fili segue da Z0 e dal diametro del filo della linea). Con Z0 libero una sola linea può fissare ampiezza e fase della corrente dell'elemento lontano; i campi di sonda danno anche Z0 e lunghezza di un nullo posteriore esatto (colonna null_line del CSV). Vuoto: lo Z0 della geometria della linea."),
+    "--tap-symmetric": (
+        "T-match feed: keep the same tap and the same T-bar offset on both driven elements during the search. By default the rear and front taps and bars are separate search variables: they set the amplitude relation of the element currents, which a phase line of fixed Z0 cannot set on its own.",
+        "Alimentación T-match: mantiene la misma toma y la misma separación de barra T en ambos elementos excitados durante la búsqueda. Por defecto las tomas y barras trasera y delantera son variables de búsqueda separadas: fijan la relación de amplitud de las corrientes de los elementos, que una línea de fase de Z0 fijo no puede fijar por sí sola.",
+        "Alimentazione T-match: mantiene la stessa presa e la stessa distanza della barra T su entrambi gli elementi alimentati durante la ricerca. Per impostazione predefinita prese e barre posteriori e anteriori sono variabili di ricerca separate: fissano la relazione di ampiezza delle correnti degli elementi, che una linea di fase a Z0 fisso non può fissare da sola."),
+    "--robust-inner": (
+        "With the line solved exactly: the line is chosen by the 10th percentile score over this many common random draws of the line length (MC: line tol), line VF (MC: line VF tol), Z0 (MC: line Z0 tol) and series capacitor (MC: series C tol). These tolerances change only the phase network, so they cost no nec2c runs. 0 (default) = the nominal line.",
+        "Con la línea resuelta de forma exacta: la línea se elige por el percentil 10 de la puntuación sobre este número de sorteos aleatorios comunes de la longitud de línea (MC: tolerancia de línea), el VF (MC: tolerancia del VF), el Z0 (MC: tolerancia del Z0) y el condensador serie (MC: tolerancia del C serie). Estas tolerancias solo cambian la red de fase, así que no cuestan ejecuciones de nec2c. 0 (por defecto) = la línea nominal.",
+        "Con la linea risolta in modo esatto: la linea viene scelta per il 10° percentile del punteggio su questo numero di estrazioni casuali comuni della lunghezza della linea (MC: tolleranza linea), del VF (MC: tolleranza VF), dello Z0 (MC: tolleranza Z0) e del condensatore serie (MC: tolleranza C serie). Queste tolleranze cambiano solo la rete di fase, quindi non costano esecuzioni di nec2c. 0 (predefinito) = la linea nominale."),
+    "--tap-offset-rear-mm": (
+        "T-match feed: T-bar offset in mm of the rear element. Empty: the T-bar offset.",
+        "Alimentación T-match: separación en mm de la barra T del elemento trasero. Vacío: la separación de la barra T.",
+        "Alimentazione T-match: distanza in mm della barra T dell'elemento posteriore. Vuoto: la distanza della barra T."),
+    "--tap-offset-front-mm": (
+        "T-match feed: T-bar offset in mm of the front element. Empty: the T-bar offset.",
+        "Alimentación T-match: separación en mm de la barra T del elemento delantero. Vacío: la separación de la barra T.",
+        "Alimentazione T-match: distanza in mm della barra T dell'elemento anteriore. Vuoto: la distanza della barra T."),
+    "--search-bars": (
+        "T-match feed: the T-bar offsets of the rear and front elements are search variables (default yes), from 20 mm (and 3 element diameters) to 120 mm, always leaving room for the phase line between the bars. Together with the taps they set the impedance transformation of each element. no keeps the T-bar offset.",
+        "Alimentación T-match: las separaciones de las barras T de los elementos trasero y delantero son variables de búsqueda (por defecto sí), de 20 mm (y 3 diámetros del elemento) a 120 mm, dejando siempre sitio para la línea de fase entre las barras. Junto con las tomas fijan la transformación de impedancia de cada elemento. no mantiene la separación de la barra T.",
+        "Alimentazione T-match: le distanze delle barre T degli elementi posteriore e anteriore sono variabili di ricerca (predefinito sì), da 20 mm (e 3 diametri dell'elemento) a 120 mm, lasciando sempre spazio per la linea di fase tra le barre. Insieme alle prese fissano la trasformazione d'impedenza di ogni elemento. no mantiene la distanza della barra T."),
+    "--parasitic-inner": (
+        "With reflectors or directors and the line solved exactly: rounds of a stage after the local search that tunes the parasitic lengths on a multiport model (default 3). Probe runs with a port at each feed point and at the centre of every parasitic element give the antenna for any reactance placed at those centres; a change of a parasitic length acts as such a reactance (its slope comes from a second probe set with the parasitic elements lengthened). The lengths that maximize the score on that model, each with its own exact phase line, are simulated and kept only when they improve the best candidate. Each round costs 2 x (2 + number of parasitic elements) probe runs and one simulation. 0 turns it off.",
+        "Con reflectores o directores y la línea resuelta de forma exacta: rondas de una etapa posterior a la búsqueda local que ajusta las longitudes de los parásitos sobre un modelo multipuerto (por defecto 3). Ejecuciones de sonda con un puerto en cada punto de alimentación y en el centro de cada elemento parásito dan la antena para cualquier reactancia colocada en esos centros; un cambio de longitud de un parásito actúa como esa reactancia (su pendiente sale de un segundo juego de sondas con los parásitos alargados). Las longitudes que maximizan la puntuación en ese modelo, cada una con su línea de fase exacta, se simulan y solo se conservan si mejoran al mejor candidato. Cada ronda cuesta 2 x (2 + número de parásitos) ejecuciones de sonda y una simulación. 0 la desactiva.",
+        "Con riflettori o direttori e la linea risolta in modo esatto: cicli di una fase successiva alla ricerca locale che regola le lunghezze dei parassiti su un modello multiporta (predefinito 3). Esecuzioni di sonda con una porta in ogni punto di alimentazione e al centro di ogni elemento parassita danno l'antenna per qualsiasi reattanza posta in quei centri; una variazione di lunghezza di un parassita agisce come tale reattanza (la sua pendenza viene da un secondo gruppo di sonde con i parassiti allungati). Le lunghezze che massimizzano il punteggio su quel modello, ciascuna con la propria linea di fase esatta, vengono simulate e conservate solo se migliorano il miglior candidato. Ogni ciclo costa 2 x (2 + numero di parassiti) esecuzioni di sonda e una simulazione. 0 la disattiva."),
+    "--sensitivity": (
+        "After the search: first-order tolerance sensitivity of the best design. Every build dimension (element lengths, spacing, taps, T-bar offsets, reflector/director lengths and spacings, phase line length, VF and Z0, series capacitor) is moved by its MC tolerance in both directions, one at a time, with the phase line, the series capacitor and the matching network as built. The table gives the score, F/B, gain and Zin changes per dimension, sorted by score drop, plus the worst-case (linear sum) and RSS drops; it is also written to the JSON and the build sheet. Two simulations per dimension.",
+        "Tras la búsqueda: sensibilidad de primer orden del mejor diseño a las tolerancias. Cada dimensión de construcción (longitudes de elementos, separación, tomas, separaciones de barra T, longitudes y separaciones de reflectores/directores, longitud, VF y Z0 de la línea de fase, condensador serie) se mueve en su tolerancia MC en ambos sentidos, de una en una, con la línea de fase, el condensador serie y la red de adaptación tal como se construyen. La tabla da los cambios de puntuación, F/B, ganancia y Zin por dimensión, ordenados por pérdida de puntuación, y las pérdidas en el peor caso (suma lineal) y RSS; también se escribe en el JSON y en la hoja de construcción. Dos simulaciones por dimensión.",
+        "Dopo la ricerca: sensibilità del primo ordine del progetto migliore alle tolleranze. Ogni dimensione di costruzione (lunghezze degli elementi, spaziatura, prese, distanze delle barre T, lunghezze e spaziature di riflettori/direttori, lunghezza, VF e Z0 della linea di fase, condensatore serie) viene spostata della sua tolleranza MC in entrambi i versi, una alla volta, con la linea di fase, il condensatore serie e la rete di adattamento come costruiti. La tabella dà le variazioni di punteggio, F/B, guadagno e Zin per dimensione, ordinate per perdita di punteggio, e le perdite nel caso peggiore (somma lineare) e RSS; viene scritta anche nel JSON e nella scheda di costruzione. Due simulazioni per dimensione."),
+    "--pareto": (
+        "After the search: the gain / F/B trade-off of the best geometry at this many F/B floors, each with the line of highest worst-band gain that reaches the floor, from its probe responses (no extra simulations per point). Printed as a table and written to <scan CSV>_pareto.csv. 0 (default) = off.",
+        "Tras la búsqueda: el compromiso ganancia / F/B de la mejor geometría en este número de pisos de F/B, cada uno con la línea de mayor ganancia en el peor punto de la banda que alcanza el piso, a partir de sus respuestas de sonda (sin simulaciones extra por punto). Se muestra como tabla y se escribe en <CSV de la exploración>_pareto.csv. 0 (por defecto) = desactivado.",
+        "Dopo la ricerca: il compromesso guadagno / F/B della geometria migliore a questo numero di soglie di F/B, ciascuna con la linea di maggior guadagno nel punto peggiore della banda che raggiunge la soglia, dalle sue risposte di sonda (nessuna simulazione extra per punto). Stampato come tabella e scritto in <CSV della ricerca>_pareto.csv. 0 (predefinito) = disattivato."),
 })
 
 
@@ -1552,9 +1684,17 @@ OPTS = [
        "tmatch (default with tl/lc): T-match on both driven elements, line and feed at the bars. center: at the "
        "element centres (default with stepped sections or a modelled feed gap).", choices=["auto", "tmatch", "center"]),
     _o("--tap-mm", "T-match tap (mm)", "float", "120.0", "GO", "Antenna",
-       "Distance from the element centre to each tap (optimize moves it)."),
+       "Distance from the element centre to each tap, both elements; optimize moves the rear and front taps separately."),
+    _o("--tap-rear-mm", "T-match rear tap (mm)", "float", "", "G", "Antenna",
+       "Tap distance on the rear element (default: the T-match tap).", ph="(T-match tap)"),
+    _o("--tap-front-mm", "T-match front tap (mm)", "float", "", "G", "Antenna",
+       "Tap distance on the front element (default: the T-match tap).", ph="(T-match tap)"),
     _o("--tap-offset-mm", "T-bar offset (mm)", "float", "50.0", "GO", "Antenna",
        "Distance from the element to the T-bar, toward the other element (closer bars lower the NEC accuracy)."),
+    _o("--tap-offset-rear-mm", "T-bar offset rear (mm)", "float", "", "G", "Antenna",
+       "T-bar offset of the rear element (default: the T-bar offset).", ph="(T-bar offset)"),
+    _o("--tap-offset-front-mm", "T-bar offset front (mm)", "float", "", "G", "Antenna",
+       "T-bar offset of the front element (default: the T-bar offset).", ph="(T-bar offset)"),
     _o("--tap-wire-mm", "T-match wire (mm)", "float", "", "GO", "Antenna",
        "Diameter of the T-bar and its stubs (default: the element diameter).", ph="(element diameter)"),
 
@@ -1634,18 +1774,55 @@ OPTS = [
     _o("--fsweep-csv", "Sweep CSV", "file_save", "", "G", "Generate", "", ph="(automatic)"),
 
     # ---------------------------------------------------------------- Optimize
-    _o("--band", "Band FMIN,FMAX,N", "text", "", "O", "Optimize", "Score every candidate over the band (worst case).",
-       ph="144,146,5"),
-    _o("--refine", "Refine rounds", "int", "", "O", "Optimize",
-       "Local search rounds after the grid (0 = grid only). Default 6 with tl/lc, 8 with reflectors/directors.",
-       ph="6"),
-    _o("--nm-evals", "Nelder-Mead runs", "int", "40", "O", "Optimize",
-       "Budget of the Nelder-Mead polish after the local search (0 = off)."),
+    _o("--band", "Band FMIN,FMAX,N", "text", "", "O", "Optimize",
+       "Score every candidate over the band (smooth worst case). Empty: 3 points at the frequency +-0.7 %; none = one "
+       "frequency.", ph="144,146,5 / none"),
+    _o("--inner-line", "Solve the line", "tri", "default", "O", "Optimize",
+       "Choose the exact phase line of every geometry from two probe runs (default yes).",
+       choices=["default", "yes", "no"]),
+    _o("--line-z0-range", "Line Z0 range (ohm)", "text", "", "O", "Optimize",
+       "MIN,MAX: the open-wire line Z0 is chosen per geometry too.", ph="150,400"),
+    _o("--tap-symmetric", "Symmetric taps", "bool", "0", "O", "Optimize",
+       "The same tap and T-bar offset on both driven elements."),
+    _o("--search-bars", "Search T-bar offsets", "tri", "default", "O", "Optimize",
+       "The T-bar offsets are search variables (default yes).", choices=["default", "yes", "no"]),
+    _o("--parasitic-inner", "Parasitics on the multiport model", "int", "3", "O", "Optimize",
+       "Rounds of reflector/director length tuning on the multiport model (0 = off)."),
+    _o("--sensitivity", "Tolerance sensitivity", "bool", "0", "O", "Optimize",
+       "Effect of every build tolerance on the best design."),
+    _o("--search", "Local search", "choice", "pattern", "O", "Optimize",
+       "pattern: pattern search then Nelder-Mead; cmaes: CMA-ES with the population in parallel.",
+       choices=["pattern", "cmaes"]),
+    _o("--starts", "Starting points", "int", "2", "O", "Optimize",
+       "Best grid candidates of distinct basins the local search starts from."),
+    _o("--lhs", "Latin-hypercube samples", "int", "0", "O", "Optimize",
+       "Extra candidates spread over the whole search box (0 = none)."),
+    _o("--refine", "Pattern search rounds", "int", "", "O", "Optimize",
+       "Maximum rounds of the pattern search after the grid (default 30; it stops earlier at the step tolerance or "
+       "the budget); 0 = off.", ph="30"),
+    _o("--refine-evals", "Pattern search runs", "int", "", "O", "Optimize",
+       "Candidates per starting point (default 10 per search variable).", ph="(10 x variables)"),
+    _o("--nm-evals", "Nelder-Mead runs", "int", "", "O", "Optimize",
+       "Candidates of the Nelder-Mead search per starting point (default 15 per variable; 0 = off).",
+       ph="(15 x variables)"),
     _o("--pretune", "Pre-tune front length", "tri", "default", "O", "Optimize",
-       "Tune the front length for X_in ~ 0 at the NEC port (without the series capacitor) before the grid (default "
-       "on).", choices=["default", "yes", "no"]),
-    _o("--fb-metric", "F/B metric", "choice", "sector", "O", "Optimize",
-       "F/B used by the score: point, sector (ring) or cone (any elevation).", choices=["point", "sector", "cone"]),
+       "Tune the front length for X_in ~ 0 before the grid. Default: only without the L-network score.",
+       choices=["default", "yes", "no"]),
+    _o("--fb-metric", "F/B metric", "choice", "cone", "O", "Optimize",
+       "F/B used by the score: point, sector (ring), cone (any elevation, default) or rear-avg (power average of the "
+       "cone).", choices=["point", "sector", "cone", "rear-avg"]),
+    _o("--fb-cap", "F/B ceiling (dB)", "float", "40.0", "O", "Optimize",
+       "Smooth ceiling of the F/B in the score (0 = none)."),
+    _o("--band-softness", "Band softness (dB)", "float", "0.5", "O", "Optimize",
+       "Smooth minimum over the band frequencies (0 = worst case)."),
+    _o("--min-fb", "Minimum F/B (dB)", "float", "", "O", "Optimize", "Constraint on the worst-band F/B."),
+    _o("--min-gain", "Minimum gain (dBi)", "float", "", "O", "Optimize", "Constraint on the worst-band gain."),
+    _o("--q-weight", "|X|/R weight (dB)", "float", "0.2", "O", "Optimize",
+       "dB of score per unit of |X_in|/R_in above 2 at the design frequency (0 = off)."),
+    _o("--robust-inner", "Robust line (samples)", "int", "0", "O", "Optimize",
+       "Choose the line by the 10th percentile over N line / VF / Z0 / series C tolerance draws (0 = nominal)."),
+    _o("--pareto", "Gain/F/B trade-off", "int", "0", "O", "Optimize",
+       "N-point table of gain against F/B of the best geometry (0 = off)."),
     _o("--jobs", "Parallel jobs", "int", "", "O", "Optimize", "Default: number of CPUs."),
     _o("--csv", "Scan CSV", "file_save", "hb9cv_scan.csv", "O", "Optimize", ""),
     _o("--parasitic-length-offsets", "Parasitic length offsets", "text", "0", "O", "Optimize",
@@ -1659,7 +1836,7 @@ OPTS = [
     _o("--front-length-values", "Front length factors", "text", "0.98,1.0,1.02", "O", "Optimize",
        "Re-centred on the pre-tuned front length."),
     _o("--line-offset-values", "Line offsets (deg)", "text", "-30,-25,-20,-15,-10,-5,0,5,10,15,20,25,30", "O",
-       "Optimize", "Offsets from the centre of the line scan: the synthesized or theoretical line (tl/lc)."),
+       "Optimize", "Only with 'Solve the line' off: offsets from the centre of the line scan (tl/lc)."),
     _o("--line-length-values", "Line lengths (m)", "text", "", "O", "Optimize", "Replaces the offsets."),
     _o("--z0-values", "Z0 values (ohm)", "text", "", "O", "Optimize", "e.g. 50,75,300", ph="50,75,300"),
     _o("--ratio-values", "Amplitude ratios", "text", "0.7,1.0,1.3", "O", "Optimize", "Ideal network only."),
@@ -1772,7 +1949,7 @@ EXAMPLE_VALUES = {
     "--ground": "free",
     "--orientation": "horizontal",
     "--run": True,
-    # ---- optimisation: best gain + direct match to a real 50 ohm line
+    # ---- optimisation: best gain with at least 20 dB F/B + direct match to a real 50 ohm line
     "--objective": "gain",
     "--target-impedance": "50",
     "--realized-gain": "yes",
@@ -1784,9 +1961,8 @@ EXAMPLE_VALUES = {
     "--spacing-values": "0.10,0.125,0.15",
     "--rear-length-values": "0.97,1.0,1.03",
     "--front-length-values": "0.97,1.0,1.03",
-    "--line-offset-values": "-20,-10,0,10,20",
     "--z0-values": "200,250,310",
-    "--refine": "6",
+    "--min-fb": "20",
     "--refine-spacing": "yes",
     "--build-sheet": "hb9cv_146MHz_build.md",
     # match / sweep tabs: same antenna, so the L-network is designed at 146 MHz too
@@ -2112,11 +2288,12 @@ def simulate_pattern(core, nec_path: Path, freq_hint: float, step: float, exe: s
             raise RuntimeError(tr("err.no_rp"))
         if over_ground:
             th_cut = core.elevation_peak_theta(secs[0])
-        ring_out, _ = _run_deck(core, exe, td, "ring", base + [
-            f"RP 0 1 361 1000 {th_cut:g} 0 0 1", f"RP 0 {19 if over_ground else 37} 37 1000 0 90 5 5", "XQ", "EN", ""])
+        cone_cards = core.cone_grid_cards(th_cut, core.rear_cone_half_angle(rs, re_), over_ground)
+        ring_out, _ = _run_deck(core, exe, td, "ring", base + [f"RP 0 1 361 1000 {th_cut:g} 0 0 1"] + cone_cards
+                                + ["XQ", "EN", ""])
         m = core.parse_metrics(ring_out, theta=th_cut, rear_start=rs, rear_end=re_, ground_free=not over_ground)
         ring_text = ring_out.read_text(errors="replace")
-        ring_pts, _n = core.ring_from_section(core.parse_pattern_sections(ring_text)[0], th_cut)
+        ring_pts, *_n = core.ring_from_section(core.parse_pattern_sections(ring_text)[0], th_cut)
         zin = None
         try:
             zin = core.single_source_zin(ring_out)[0][1]

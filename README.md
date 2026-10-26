@@ -33,6 +33,8 @@ It comes in two parts:
 - Up to 2 extra reflectors and 5 directors.
 - Free space or real ground (average, good, perfect or custom εr/σ), horizontal or vertical polarization, and an
   optional metal mast.
+- Separate T-match taps and T-bar offsets on the rear and front elements (`--tap-rear-mm`, `--tap-front-mm`,
+  `--tap-offset-rear-mm`, `--tap-offset-front-mm`).
 - Phasing line synthesized from the actual two-port response of the elements: the two probe patterns are
   superposed to get the exact pattern for any line, and the line that maximizes the chosen objective (gain, F/B,
   or both) is picked, at the horizon in free space or at the take-off angle over ground. The textbook 180° − kd
@@ -41,8 +43,10 @@ It comes in two parts:
 
 **Analysis**
 - Gain in dBi and dBd, realized gain, take-off angle, and azimuth/elevation half-power beamwidth.
-- Front-to-back ratio in three variants: point (180°), rear sector (default 150–210°), and rear cone at any
-  elevation.
+- Front-to-back ratio in four variants: point (180°), rear sector (default 150–210°), rear cone at any
+  elevation (worst direction within the sector half-angle of the back direction, on a 5° rear half-sphere grid plus
+  a 2° grid over the cone), and rear average (power average of that cone, a smooth front-to-rear ratio). A
+  direction without radiation counts as −80 dBi, so an exact null gives a finite F/B.
 - Input impedance, VSWR, and 2:1 bandwidth from a frequency sweep.
 - Quality checks: average-gain test, NEC power-budget check (unphysical runs are rejected), segmentation
   convergence (gain, F/B, R_in and |Zin|; on by default in optimize, where |ΔZin| is reported as the Zin
@@ -55,14 +59,35 @@ It comes in two parts:
 - Sensitivity studies: metal boom, mast, mast length, height sweep, and common-mode current on the feed line.
 
 **Optimization**
-- Grid search, then local refinement, then a Nelder–Mead polish over spacing, element lengths, line length and
-  Z0, T-match taps, tube diameter and parasitic elements.
-- Objectives: `front-back`, `gain` or `balance`, scored at the worst frequency of a band. The design frequency
-  (`--freq`) must lie inside the band and is always one of the scored frequencies.
+- Exact inner solver for the phase network (`--inner-line`, default): two probe runs per geometry, over all the
+  scored frequencies, give the pattern and Zin of the antenna for any line, so the line length (and, with
+  `--line-z0-range`, the open-wire Z0) that maximizes the score is chosen per geometry, and the candidate's results
+  come from the superposed probe fields (exact for the linear NEC model; the final model is simulated in full as a
+  check). The line is not a grid dimension, and the closed-form line of an exact rear null is reported.
+- Search variables: element lengths, the rear and front T-match taps and T-bar offsets (moved separately;
+  `--tap-symmetric` keeps one of each, `--no-search-bars` keeps the bar offset), spacing, tube diameter (purchasable
+  sizes) and every reflector/director length and spacing.
+- Reflector/director lengths are also tuned on a multiport model (`--parasitic-inner`, 3 rounds by default): probe
+  runs with a port at every feed point and parasitic centre give the antenna for any reactance at those centres, a
+  length change acts as such a reactance, and the lengths that maximize the score on that model are simulated and
+  kept only when they improve the design.
+- Grid (optionally plus `--lhs` Latin-hypercube samples), then a local search from `--starts` distinct basins:
+  a coordinate pattern search that combines all improving moves and stops at the step tolerance, followed by a
+  Nelder–Mead search on normalized variables (adaptive coefficients, one restart), or CMA-ES (`--search cmaes`,
+  whole populations in parallel). Budgets are counted in nec2c simulations; the stop reason of every stage is
+  printed, and so are the search limits the best model sits on.
+- Objectives: `front-back`, `gain` or `balance`, scored over a band (default: 3 points at `--freq` ±0.7 %, so a
+  null at a single frequency is never rewarded) with a smooth worst case (`--band-softness`), an F/B ceiling
+  (`--fb-cap`), constraints (`--min-fb`, `--min-gain`) and a penalty for very reactive inputs (`--q-weight`).
+  The default F/B metric is the rear cone. `--pareto N` prints the gain / F/B trade-off of the best geometry.
 - Optional scoring through an L-network built from components with finite Q.
 - An impedance window for Rin and |Xin|. If no candidate meets it, the closest one is still written.
-- Monte-Carlo tolerance analysis that re-ranks candidates by their 10th-percentile score, to favour designs that
-  are robust to build errors.
+- First-order tolerance sensitivity of the best design (`--sensitivity`): every build dimension moved by its
+  tolerance, with the score, F/B, gain and Zin changes, and the worst-case and RSS drops (also in the JSON and the
+  build sheet).
+- Monte-Carlo tolerance analysis that re-ranks distinct designs (one per basin) by their 10th-percentile score; line
+  length, VF, Z0 and series-capacitor tolerances can also be optimized inside the line solver at no simulation cost
+  (`--robust-inner N`).
 
 **Matching**
 - Ideal L-network for any NEC result or a typed R + jX: every solution of both topologies (series or shunt branch
@@ -291,8 +316,8 @@ Typical workflow:
 ```bash
 # 1. find a good geometry for the 2 m band
 python3 hb9cv.py --mode optimize --freq 146 --band 145,147,3 \
-    --spacing-values 0.1,0.125,0.15 --line-offset-values=-10,0,10 \
-    --tolerance-mc 100 --tol-top-k 3 --build-sheet hb9cv_build.md -o hb9cv_opt.nec
+    --spacing-values 0.1,0.125,0.15 --tolerance-mc 100 --tol-top-k 3 \
+    --build-sheet hb9cv_build.md -o hb9cv_opt.nec
 
 # 2. simulate a model over frequency (impedance vs f, 2:1 bandwidth)
 python3 hb9cv.py --mode generate --fsweep 140,150,0.5 --run -o sweep.nec
@@ -313,6 +338,9 @@ python3 hb9cv.py --mode generate --ground average --height-m 10 --run -o ground.
 # HB9CV with one reflector and two directors
 python3 hb9cv.py --mode generate --reflectors 1 --directors 2 --run -o yagi.nec
 
+# highest gain with at least 20 dB F/B, free line Z0, and the gain / F/B trade-off of the result
+python3 hb9cv.py --mode optimize --objective gain --min-fb 20 --line-z0-range 150,400 --pareto 8
+
 # trust checks: segmentation convergence and robustness (boom, mast, coax without choke)
 python3 hb9cv.py --mode generate --robustness --check-convergence -o check.nec
 ```
@@ -331,6 +359,7 @@ All files are written to the working directory (the GUI's work folder).
 | `name.freqs.json` | `--run`, optimize | exact frequencies of the deck (used by match/sweep) |
 | `name_build.md` / `.json` | `--build-sheet` | build sheet: cut lengths, boom, phasing line, T-match, tuning |
 | `hb9cv_scan.csv` | optimize (`--csv`) | every candidate with its dimensions and score |
+| `hb9cv_scan_pareto.csv` | optimize `--pareto` | gain / F/B trade-off of the best geometry |
 | `lnetwork_sweep.csv` | sweep | VSWR and impedances of the matching network vs frequency |
 | `--json-out FILE` | all modes | main results as JSON (read by the GUI) |
 

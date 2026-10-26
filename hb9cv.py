@@ -22,9 +22,10 @@
 One program, four modes selected with --mode:
 
   generate  Write an exploratory NEC2C model of an HB9CV (optionally run nec2c).
-  optimize  Grid search plus local refinement and a Nelder-Mead polish over the model
-            parameters, running nec2c for every candidate. Requires nec2c (--nec2c PATH, the
-            HB9CV_NEC2C environment variable or the PATH).
+  optimize  Grid search plus a local search (pattern search and Nelder-Mead, or CMA-ES) from
+            several starting points over the model parameters, with the phase line of every
+            geometry solved exactly from two probe runs, running nec2c for every candidate.
+            Requires nec2c (--nec2c PATH, the HB9CV_NEC2C environment variable or the PATH).
   match     Compute an ideal L-network that matches the NEC input impedance (or a
             manually given R + jX) to a Z0 source at a single frequency.
   sweep     Frequency sweep of an L-network designed at one frequency, using the
@@ -50,9 +51,11 @@ Ground, polarization and pattern (generate / optimize):
   reflection), take-off angle, azimuth half-power beamwidth, F/B at the take-off angle.
 - Gain is the NEC power gain referred to the power accepted at the input: it includes conductor loss and
   excludes the source mismatch; the realized gain adds 10*log10(1 - |Gamma|^2) against --target-impedance.
-- F/B: point (phi=180 on the ring), sector (worst point of --rear-sector on the ring) and cone (worst direction
-  within the sector half-angle of the back direction at ANY elevation, from a 5 degree rear half-sphere grid).
-  optimize --fb-metric chooses the one the score uses (default sector).
+- F/B: point (phi=180 on the ring), sector (worst point of --rear-sector on the ring), cone (worst direction
+  within the sector half-angle of the back direction at ANY elevation, from a 5 degree rear half-sphere grid and
+  a 2 degree grid over the cone) and rear-avg (forward gain minus the solid-angle weighted power average of that
+  cone). A direction without radiation counts as -80 dBi. optimize --fb-metric chooses the one the score uses
+  (default cone); --fb-cap puts a smooth ceiling on it in the score.
 - optimize --match-score (default with tl/lc) scores every candidate through the ideal L-network designed at
   --freq against --target-impedance with components of Q --match-q-l/--match-q-c: matched VSWR over the band, gain
   after the network loss and mismatch; the front-back objective keeps the pure F/B and pays --loss-weight dB of
@@ -62,13 +65,26 @@ Ground, polarization and pattern (generate / optimize):
   (--strict-zin stops with an error instead).
   --refine-diameter steps through the purchasable --diameter-values (default 6,8,10,12,14,16 mm; 'any' =
   continuous within --diameter-range).
-- optimize --band FMIN,FMAX,N scores every candidate at N frequencies and keeps the worst case;
+- optimize --band FMIN,FMAX,N scores every candidate at N frequencies and keeps a smooth worst case
+  (--band-softness; default band: 3 points at --freq +-0.7 %, --band none for --freq alone);
   --tolerance-mc N ranks the best candidates by the 10th percentile score under random build tolerances
   (element lengths and spacings, line length, T-match taps and bar offsets per element, line VF and Z0, series
   capacitor; the same perturbations for every candidate). The series capacitor and the matching network stay as
   designed for the nominal candidate (--tol-retune re-tunes them per sample). Candidates are simulated in parallel
-  (--jobs) and every geometry only once (a candidate the search revisits reuses its result). The scan CSV starts
-  with '#' comment lines that record the arguments and the nec2c version.
+  (--jobs) and every geometry only once (a candidate the search revisits reuses its result); the Monte-Carlo
+  designs are the best of distinct basins. The scan CSV starts with '#' comment lines that record the arguments and
+  the nec2c version.
+- optimize search: the grid (plus --lhs Latin-hypercube samples) gives the starting points: the best candidates of
+  --starts distinct basins. From each one a coordinate pattern search (all improving moves combined, per-variable step
+  halving, stop at the step tolerance or --refine-evals) and a Nelder-Mead search on the normalized variables
+  (adaptive coefficients, one restart, --nm-evals), or CMA-ES (--search cmaes). Variables: element lengths, the rear
+  and front T-match taps (--tap-symmetric couples them), spacing, diameter, every reflector/director length and
+  spacing, and the rear phase (ideal) or the line (--no-inner-line). --min-fb / --min-gain add constraints,
+  --q-weight penalizes a very reactive Zin, --pareto N prints the gain / F/B trade-off of the best geometry.
+  The T-match taps and T-bar offsets of the two driven elements are separate variables (--tap-symmetric,
+  --no-search-bars). With reflectors/directors, --parasitic-inner tunes their lengths on a multiport model (a port at
+  every feed point and parasitic center; a length change acts as a reactance at the center) and keeps the lengths
+  only when a simulation confirms them. --sensitivity prints the first-order tolerance sensitivity of the best design.
 
 Reflectors and directors (generate / optimize):
 - --reflectors N (0..2) adds passive reflectors behind the rear element and --directors N (0..5) passive
@@ -109,9 +125,11 @@ Model notes (generate / optimize):
   optimize: with --fb-metric, --rear-sector and --w-gain/--w-fb) is chosen: on the horizon ring in free space, on
   the ring at the take-off angle over ground. The ratio of the element-centre currents to the point-source cardioid
   (equal amplitudes, rear leading by 180 - kd) is reported as a diagnostic: with unequal elements and T-matches it
-  is not the F/B optimum. generate uses the synthesized line as the default line; optimize centers the line scan of
-  every spacing, Z0 and tap on it, and synthesizes it again for the pre-tuned front length. Without it the cardioid
-  theory below is used. A TL line is never shorter than the straight distance between its ends plus
+  is not the F/B optimum; so is the line (length and Z0) of an exact rear null. generate uses the synthesized line as
+  the default line. optimize (--inner-line, default) solves the line of every candidate geometry from probe runs over
+  all the scored frequencies, with the full optimizer score (band, matching network, penalties) and, with
+  --line-z0-range, the open-wire Z0 as well; --no-inner-line scans --line-offset-values around the synthesized line
+  instead. Without synthesis the cardioid theory below is used. A TL line is never shorter than the straight distance between its ends plus
   --line-allowance-mm (default 20 mm open-wire, 40 mm coax) and, by default, never longer than 1.5 times that
   distance (--max-line-deg); line lengths never wrap around 360 degrees.
   --line-type openwire (default): balanced air line, crossed by construction (keep
@@ -214,6 +232,7 @@ import argparse
 import cmath
 import contextlib
 import csv
+import functools
 import datetime
 import itertools
 import json
@@ -349,9 +368,22 @@ FATAL_RE = re.compile(
     r"|STRUCTURE.*WARNING|WARNING.*STRUCTURE", re.IGNORECASE)
 # Warnings that do not invalidate the run but are counted and reported.
 WARN_RE = re.compile(r"WARNING|CAUTION", re.IGNORECASE)
+# Words of FATAL_RE and WARN_RE: an output without any of them has no message to classify.
+NEC_MESSAGE_WORDS = ("ERROR", "INCORRECT", "ILLEGAL", "FAULTY", "NO SEGMENT HAS", "DOES NOT EXIST", "INTERSECT",
+                     "OVERLAP", "WARNING", "CAUTION")
 
 
 def nec_blocks(text):
+    """nec_blocks_uncached of text, cached for the last few texts (an output is often split more than once)."""
+    return _nec_blocks_cached(text)
+
+
+@functools.lru_cache(maxsize=8)
+def _nec_blocks_cached(text):
+    return tuple((f, tuple(lines)) for f, lines in nec_blocks_uncached(text))
+
+
+def nec_blocks_uncached(text):
     """Split a nec2c output text into frequency blocks: [(printed frequency or None, lines)].
 
     The first entry holds the lines before the first FREQUENCY header (frequency None). A block that repeats the
@@ -360,7 +392,7 @@ def nec_blocks(text):
     tables are kept, so every solved frequency is one block whatever the number of pattern requests."""
     parts, cur_f, cur = [], None, []
     for line in text.splitlines():
-        m = FREQ_RE.search(line)
+        m = FREQ_RE.search(line) if ("REQUENCY" in line or "requency" in line) else None
         if m:
             parts.append((cur_f, cur))
             cur_f, cur = float(m.group(1)), [line]
@@ -517,6 +549,9 @@ def scan_nec_messages(text):
     marker = text.find("STRUCTURE SPECIFICATION")
     body = text[marker:] if marker >= 0 else text
     fatal, warnings = [], []
+    upper = body.upper()
+    if not any(word in upper for word in NEC_MESSAGE_WORDS):
+        return fatal, warnings
     for line in body.splitlines():
         stripped = line.strip()
         if not stripped:
@@ -574,7 +609,11 @@ def zin_in_order(path, n_expected):
 
 
 DBI_TO_DBD = 2.15   # a half-wave dipole has 2.15 dBi in free space
-FB_METRIC_KEYS = {"point": "fb", "sector": "robust_fb", "cone": "cone_fb"}
+FB_METRIC_KEYS = {"point": "fb", "sector": "robust_fb", "cone": "cone_fb", "rear-avg": "rear_avg_fb"}
+G_FLOOR_DB = -80.0          # gain (dBi) used for a direction where nec2c prints no radiation (-999.99)
+NEC_NULL_DB = -900.0        # nec2c prints -999.99 dB for a zero field
+CONE_FINE_STEP = 2.0        # degrees: fine grid of the rear cone (a divisor of the 1 degree ring grid)
+DEFAULT_CONE_HALF_DEG = 30.0
 
 
 def parse_pattern_sections(text):
@@ -605,18 +644,22 @@ def parse_pattern_sections(text):
 
 
 def ring_from_section(section, theta, az_step=None):
-    """(phi -> total gain dB for the valid points of the ring at theta, number of rows of that ring). With az_step
-    only the azimuths of that grid are taken, so the points of other pattern requests at the same theta (the rear
-    half-sphere grid) never enter the ring."""
-    pts, phis = {}, set()
+    """(phi -> total gain dB of the ring at theta, number of rows of that ring, number of rows without radiation).
+    A direction where nec2c prints no radiation (-999.99 dB) gets G_FLOOR_DB, so an exact null stays in the ring
+    and its F/B is finite. With az_step only the azimuths of that grid are taken, so the points of other pattern
+    requests at the same theta (the rear grids) never enter the ring."""
+    pts, phis, nulls = {}, set(), 0
     for (th, ph), vals in section["points"].items():
         if az_step and abs(ph / az_step - round(ph / az_step)) > 1e-6:
             continue
         if abs(th - theta) <= 0.006:
             phis.add(ph)
-            if vals[2] > -900:
-                pts[ph] = vals[2]
-    return pts, len(phis)
+            if vals[2] > NEC_NULL_DB:
+                pts[ph] = max(vals[2], G_FLOOR_DB)
+            else:
+                pts[ph] = G_FLOOR_DB
+                nulls += 1
+    return pts, len(phis), nulls
 
 
 def elevation_peak_theta(section, phi=0.0):
@@ -659,11 +702,12 @@ def half_power_beamwidth(pattern, drop=3.0):
     return 360.0 if right is None or left is None else right + left
 
 
-def ring_metrics(points, n_expected, theta, rear_start=150, rear_end=210, ground_free=True):
-    """Pattern metrics of one azimuth ring (phi -> total gain dB) at zenith angle theta."""
+def ring_metrics(points, n_expected, theta, rear_start=150, rear_end=210, ground_free=True, nulls=0):
+    """Pattern metrics of one azimuth ring (phi -> total gain dB) at zenith angle theta; nulls = rows of the ring
+    without radiation (they carry G_FLOOR_DB)."""
     if n_expected == 0:
         raise ValueError(f"no pattern points at theta={theta:g} degrees")
-    if len(points) < 0.9 * n_expected:
+    if len(points) - nulls < 0.9 * n_expected:
         if not ground_free:
             raise ValueError(f"pattern ring at theta={theta:g} has no valid points over ground; "
                              "use the take-off angle")
@@ -685,7 +729,8 @@ def ring_metrics(points, n_expected, theta, rear_start=150, rear_end=210, ground
             "robust_fb": forward_gain - worst_rear_gain, "max_gain": max_gain, "max_angle": max_angle,
             "hpbw": half_power_beamwidth(points), "gain_dbd": (forward_gain - DBI_TO_DBD) if ground_free else None,
             "theta_deg": theta, "cone_fb": forward_gain - worst_rear_gain, "cone_rear_gain": worst_rear_gain,
-            "cone_worst_theta": theta, "cone_worst_phi": worst_rear_angle, "cone_points": 0}
+            "cone_worst_theta": theta, "cone_worst_phi": worst_rear_angle, "cone_points": 0,
+            "rear_avg_gain": worst_rear_gain, "rear_avg_fb": forward_gain - worst_rear_gain}
 
 
 def rear_cone_half_angle(rear_start, rear_end):
@@ -693,34 +738,80 @@ def rear_cone_half_angle(rear_start, rear_end):
     return max(abs(180.0 - rear_start), abs(rear_end - 180.0))
 
 
+def cone_grid_cards(theta_ring, half_deg, over_ground):
+    """RP cards of the rear-cone grids for a ring at zenith angle theta_ring: the rear half-sphere on a 5 degree grid
+    (theta 0..180 in free space, 0..90 over ground) and a CONE_FINE_STEP grid that covers the cone of half_deg
+    around the back direction (phi=180 at the elevation of the ring)."""
+    th_max = 90.0 if over_ground else 180.0
+    s = CONE_FINE_STEP
+    lo = max(0.0, theta_ring - half_deg)
+    hi = min(th_max, theta_ring + half_deg)
+    t0 = s * math.floor(lo / s + 1e-9)
+    t1 = s * math.ceil(hi / s - 1e-9)
+    if lo <= 1e-9:
+        dphi = 90.0
+    else:
+        dphi = min(90.0, math.degrees(math.asin(min(1.0, math.sin(math.radians(half_deg))
+                                                     / math.sin(math.radians(lo))))))
+    dphi = min(90.0, s * math.ceil(dphi / s - 1e-9) + s)
+    nth = int(round((t1 - t0) / s)) + 1
+    nph = int(round(2.0 * dphi / s)) + 1
+    return [f"RP 0 {19 if over_ground else 37} 37 1000 0 90 5 5",
+            f"RP 0 {nth} {nph} 1000 {t0:g} {180.0 - dphi:g} {s:g} {s:g}"]
+
+
+def _on_fine_grid(th, ph):
+    """True for a direction of the CONE_FINE_STEP grid (theta and phi multiples of the step)."""
+    s = CONE_FINE_STEP
+    return abs(th / s - round(th / s)) < 1e-6 and abs(ph / s - round(ph / s)) < 1e-6
+
+
+def rear_avg_db(samples):
+    """Power average (dB) of (theta, gain dB) samples of a uniform theta/phi grid, weighted by sin(theta) (the solid
+    angle of each cell); None without samples."""
+    num = den = 0.0
+    for th, g in samples:
+        w = math.sin(math.radians(th))
+        num += w * 10.0 ** (g / 10.0)
+        den += w
+    if den <= 0:
+        return None
+    return 10.0 * math.log10(max(num / den, 1e-30))
+
+
 def add_cone_metrics(m, section, rear_start=150, rear_end=210):
-    """Add the rear-cone F/B to the ring metrics m: forward gain minus the highest gain of every pattern point
-    of section within the rear-sector half-angle of the back direction (phi=180 at the elevation of the ring),
-    at any elevation. Uses the rear half-sphere grid written by build_deck; the ring sector itself is always
-    included, so cone_fb <= robust_fb."""
+    """Add the rear-cone metrics to the ring metrics m. cone_fb: forward gain minus the highest gain of every pattern
+    point of section within the rear-sector half-angle of the back direction (phi=180 at the elevation of the ring),
+    at any elevation; the ring sector itself is always included, so cone_fb <= robust_fb. rear_avg_fb: forward gain
+    minus the solid-angle weighted power average of the same cone on the CONE_FINE_STEP grid (a smooth front-to-rear
+    ratio; equal to robust_fb when the deck has no cone grid). Directions without radiation count as G_FLOOR_DB."""
     half = math.radians(rear_cone_half_angle(rear_start, rear_end))
     th_r = math.radians(m["theta_deg"])
     back = (-math.sin(th_r), 0.0, math.cos(th_r))
     worst, w_th, w_ph, count = m["worst_rear_gain"], m["theta_deg"], m["worst_rear_angle"], 0
     cos_half = math.cos(half) - 1e-9
+    fine = []
     for (th, ph), vals in section["points"].items():
-        if vals[2] <= -900:
-            continue
         t, p_ = math.radians(th), math.radians(ph)
         d = (math.sin(t) * math.cos(p_), math.sin(t) * math.sin(p_), math.cos(t))
         if d[0] * back[0] + d[1] * back[1] + d[2] * back[2] >= cos_half:
+            g = max(vals[2], G_FLOOR_DB)
             count += 1
-            if vals[2] > worst:
-                worst, w_th, w_ph = vals[2], th, ph
+            if _on_fine_grid(th, ph):
+                fine.append((th, g))
+            if g > worst:
+                worst, w_th, w_ph = g, th, ph
+    avg = rear_avg_db(fine) if len(fine) >= 9 else None
     m.update(cone_fb=m["forward_gain"] - worst, cone_rear_gain=worst, cone_worst_theta=w_th, cone_worst_phi=w_ph,
-             cone_points=count)
+             cone_points=count, rear_avg_gain=avg if avg is not None else m["worst_rear_gain"],
+             rear_avg_fb=m["forward_gain"] - (avg if avg is not None else m["worst_rear_gain"]))
     # Cross-polar discrimination in the forward direction: the stronger of the vertical and horizontal
     # components (the ring is written with XNDA=1000) minus the weaker one; inf when the weaker one is a null.
     fwd = next((v for (th, ph), v in section["points"].items() if abs(th - m["theta_deg"]) <= 0.006 and ph == 0.0),
                None)
     m["xpd_db"] = None
-    if fwd is not None and max(fwd[0], fwd[1]) > -900:
-        m["xpd_db"] = abs(fwd[0] - fwd[1]) if min(fwd[0], fwd[1]) > -900 else math.inf
+    if fwd is not None and max(fwd[0], fwd[1]) > NEC_NULL_DB:
+        m["xpd_db"] = abs(fwd[0] - fwd[1]) if min(fwd[0], fwd[1]) > NEC_NULL_DB else math.inf
     return m
 
 
@@ -753,8 +844,8 @@ def parse_metrics(path, theta=None, rear_start=150, rear_end=210, section=0, gro
         if len(ring) != 1:
             raise ValueError("the pattern table has several azimuth rings; pass theta=")
         theta = ring[0]
-    points, n_expected = ring_from_section(sec, theta, az_step)
-    return add_cone_metrics(ring_metrics(points, n_expected, theta, rear_start, rear_end, ground_free), sec,
+    points, n_expected, nulls = ring_from_section(sec, theta, az_step)
+    return add_cone_metrics(ring_metrics(points, n_expected, theta, rear_start, rear_end, ground_free, nulls), sec,
                             rear_start, rear_end)
 
 
@@ -797,10 +888,10 @@ def parse_current_rows(lines):
     return rows
 
 
-def parse_element_currents(path, freq_section=0):
+def parse_element_currents(path, freq_section=0, text=None):
     """Rows of the CURRENTS AND LOCATION table of one frequency block (0 = first) of a nec2c .out
-    file, as returned by parse_current_rows. Raises ValueError when the table is absent or empty."""
-    text = Path(path).read_text(errors="replace")
+    file (or of its text), as returned by parse_current_rows. Raises ValueError when the table is absent or empty."""
+    text = Path(path).read_text(errors="replace") if text is None else text
     blocks = []
     for _freq, lines in nec_blocks(text):
         cur, on = [], False
@@ -1243,7 +1334,7 @@ def series_c_loss_db(zin, zin_port):
     return 10.0 * math.log10(zin_port.real / (zin_port.real + esr)) if esr > 0 else 0.0
 
 
-GAIN_KEYS = ("forward_gain", "rear_gain", "worst_rear_gain", "max_gain", "cone_rear_gain")
+GAIN_KEYS = ("forward_gain", "rear_gain", "worst_rear_gain", "max_gain", "cone_rear_gain", "rear_avg_gain")
 
 
 def apply_gain_offset(m, db):
@@ -1264,8 +1355,18 @@ def feed_distance_m(args, spacing_m):
     """Straight distance between the two points the phase network connects: the element centers, or the two
     T-bar centers with --feed-style tmatch."""
     if getattr(args, "feed_style", "center") == "tmatch" and args.network in ("tl", "lc"):
-        return spacing_m - 2.0 * (getattr(args, "tap_offset_mm", None) or DEFAULT_TAP_OFFSET_MM) / 1000.0
+        return spacing_m - sum(element_bars_mm(args)) / 1000.0
     return spacing_m
+
+
+def element_bars_mm(args, geom=None):
+    """(rear, front) T-bar offsets in mm: from geom (optimize) or from --tap-offset-rear-mm / --tap-offset-front-mm,
+    both defaulting to --tap-offset-mm."""
+    geom = geom or {}
+    base = getattr(args, "tap_offset_mm", None) or DEFAULT_TAP_OFFSET_MM
+    rear = geom.get("bar_rear_mm") or getattr(args, "tap_offset_mm_rear", None) or base
+    front = geom.get("bar_front_mm") or getattr(args, "tap_offset_mm_front", None) or base
+    return float(rear), float(front)
 
 
 def wrap180(x):
@@ -1965,8 +2066,12 @@ def build_deck(args):
         extra_cm.append(f"CM Feed gap g={gap_m * 1000:g} mm modeled: a 1-segment wire of length g bridges the gap at "
                         "each element center and carries EX/TL (the gap capacitance is not modeled).")
     if tmatch:
-        extra_cm.append(f"CM T-match feed on both driven elements: taps {tap_m * 1000:g} mm from each element center, "
-                        f"bars {tap_off_m * 1000:g} mm from the element toward the other one, wire "
+        tap_txt = (f"{taps['rear'] * 1000:g} mm" if abs(taps["rear"] - taps["front"]) < 1e-9 else
+                   f"{taps['rear'] * 1000:g} mm (rear) / {taps['front'] * 1000:g} mm (front)")
+        bar_txt = (f"{tap_offs['rear'] * 1000:g} mm" if abs(tap_offs["rear"] - tap_offs["front"]) < 1e-9 else
+                   f"{tap_offs['rear'] * 1000:g} mm (rear) / {tap_offs['front'] * 1000:g} mm (front)")
+        extra_cm.append(f"CM T-match feed on both driven elements: taps {tap_txt} from each element center, "
+                        f"bars {bar_txt} from the element toward the other one, wire "
                         f"{tap_rad * 2000:g} mm (tags {TAG_TMATCH_REAR}/{TAG_TMATCH_FRONT}); EX and the phase network "
                         "connect at the bar centers.")
     c_pf = series_c_value(args)
@@ -2047,9 +2152,10 @@ def build_deck(args):
         rear_cards, cseg[1] = build_element(1, -spacing / 2, half_rear, rear_secs, "rear")
         front_cards, cseg[2] = build_element(2, spacing / 2, half_front, front_secs, "front")
         lines += rear_cards + front_cards
+    par_ports = {}
     for e in par:   # passive, continuous tube (no feed gap), same plane as the driven elements
-        cards, _ = build_element(e["tag"], e["x"], e["half_m"], [(None, e["diam_mm"])], e["name"], use_gap=False,
-                                 split_center=contact)
+        cards, par_ports[e["tag"]] = build_element(e["tag"], e["x"], e["half_m"], [(None, e["diam_mm"])], e["name"],
+                                                   use_gap=False, split_center=contact)
         lines += cards
     rear_tag, front_tag = 1, 2
     # ports: element centre segments (element currents); feed_ports: where EX and the phase network connect
@@ -2153,9 +2259,10 @@ def build_deck(args):
     nt_card = None              # function (frequency in MHz -> NT card) for the LC network
     probe = getattr(args, "probe_port", None)
     if probe and args.network in ("tl", "lc"):
-        # Two-port probe: a single 1 V source on one feed port and no phase network (the other port is shorted by
-        # the continuous wire); used to measure the port and element admittances for the line synthesis.
-        ptag, pseg = fp[probe]
+        # Port probe: a single 1 V source on one feed port (or on a (tag, segment) port, e.g. the center of a
+        # parasitic element) and no phase network (the other ports are shorted by the continuous wires); used to
+        # measure the port and element admittances for the line synthesis and the multiport solver.
+        ptag, pseg = probe if isinstance(probe, tuple) else fp[probe]
         lines.append(f"EX 0 {ptag} {pseg} 0 1.00000000 0.00000000")
     elif args.network == "tl":
         tl_length = line_phys / args.coax_vf
@@ -2249,9 +2356,10 @@ def build_deck(args):
                 # XNDA=1000: vertical/horizontal/total power gains, no averaging (meaningless on one ring).
                 lines.append(f"RP 0 1 {nphi} 1000 {thetas[i]:g} 0 0 {args.az_step:.8g}")
                 if getattr(args, "rear_cone_rp", True):
-                    # Rear half of the sphere (phi 90..270) on a 5 degree grid, for the rear-cone F/B: theta
-                    # 0..180 in free space, 0..90 over ground.
-                    lines.append(f"RP 0 {37 if ground == 'free' else 19} 37 1000 0 90 5 5")
+                    # Rear half of the sphere (phi 90..270) on a 5 degree grid plus a fine grid over the rear cone,
+                    # for the rear-cone and rear-average F/B: theta 0..180 in free space, 0..90 over ground.
+                    lines += cone_grid_cards(thetas[i], getattr(args, "cone_half_deg", None) or DEFAULT_CONE_HALF_DEG,
+                                             ground != "free")
             lines.append("XQ")
         lines += ["EN", ""]
     # NEC-2 uses fixed-width cards; split long comments into several CM cards.
@@ -2267,6 +2375,7 @@ def build_deck(args):
     line_info["wire_warnings"] = wire_warnings
     line_info["line_warnings"] = line_warnings
     line_info["parasitics"] = par
+    line_info["par_ports"] = par_ports
     line_info["boom_length_mm"] = boom_len_m * 1000.0
     line_info["boom_xc_m"] = boom_xc
     return "\n".join(fixed_lines), lam, rear_len, front_len, spacing, line_info
@@ -2664,17 +2773,28 @@ def build_sheet_data(args, geom, line, zin=None, perf=None):
     data["phasing_line"] = pl
     data["half_note"] = HALF_NOTE
     if tmatch:
-        tap = geom.get("tap_mm", args.tap_mm)
-        data["tmatch"] = {"tap_from_center_mm": tap, "bar_offset_mm": args.tap_offset_mm,
-                          "wire_diameter_mm": args.tap_wire_mm or diam, "bar_length_mm": 2.0 * tap,
-                          "stub_length_mm": args.tap_offset_mm,
-                          "notes": [f"On BOTH driven elements: two stubs of {args.tap_offset_mm:g} mm from the element "
-                                    f"at {tap:g} mm each side of the center, joined by a {2 * tap:g} mm bar parallel to "
-                                    "the element, on the side facing the other element. The bar is cut at its center: "
-                                    "the phase line connects there on both elements and the feed line (through the "
-                                    "series capacitor, if any) on the fed one.",
+        tap_r, tap_f = element_taps_mm(args, geom)
+        bar_r, bar_f = element_bars_mm(args, geom)
+        same = abs(tap_r - tap_f) < 1e-6
+        same_b = abs(bar_r - bar_f) < 1e-6
+        where = (f"at {tap_r:g} mm each side of the center, joined by a {2 * tap_r:g} mm bar" if same else
+                 f"at {tap_r:g} mm (rear element) / {tap_f:g} mm (front element) each side of the center, joined by a "
+                 f"{2 * tap_r:g} mm / {2 * tap_f:g} mm bar")
+        stubs = f"{bar_r:g} mm" if same_b else f"{bar_r:g} mm (rear element) / {bar_f:g} mm (front element)"
+        data["tmatch"] = {"tap_from_center_mm": tap_r if same else None, "tap_rear_mm": tap_r, "tap_front_mm": tap_f,
+                          "bar_offset_mm": bar_r if same_b else None, "bar_offset_rear_mm": bar_r,
+                          "bar_offset_front_mm": bar_f,
+                          "wire_diameter_mm": args.tap_wire_mm or diam, "bar_length_mm": 2.0 * tap_r,
+                          "bar_length_rear_mm": 2.0 * tap_r, "bar_length_front_mm": 2.0 * tap_f,
+                          "stub_length_mm": bar_r if same_b else None, "stub_length_rear_mm": bar_r,
+                          "stub_length_front_mm": bar_f,
+                          "notes": [f"On BOTH driven elements: two stubs of {stubs} from the element "
+                                    f"{where} parallel to the element, on the side facing the other element. The bar is "
+                                    "cut at its center: the phase line connects there on both elements and the feed "
+                                    "line (through the series capacitor, if any) on the fed one.",
                                     "The stubs and bar are modeled as thin wires; their insulators are not modeled. "
-                                    "Slide the taps (both elements alike) during tuning."]}
+                                    "Slide the taps during tuning: the rear and front taps set the amplitude relation "
+                                    "of the element currents, so move each one on its own element."]}
 
     # 4. Feed point -----------------------------------------------------------------------
     n = balun_n(args)
@@ -2768,7 +2888,11 @@ def build_sheet_data(args, geom, line, zin=None, perf=None):
              "to a metal boom at their centers: simulate that with --mount contact")
             if tmatch else "Insulating element mounts / feed-gap insulators (gap " + f"{gap:g} mm)")]
     if tmatch:
-        bom.append(f"T-match: per driven element 2 stubs of {args.tap_offset_mm:g} mm and a {2 * geom.get('tap_mm', args.tap_mm):g} "
+        tap_r, tap_f = element_taps_mm(args, geom)
+        bars = f"{2 * tap_r:g}" if abs(tap_r - tap_f) < 1e-6 else f"{2 * tap_r:g} (rear) / {2 * tap_f:g} (front)"
+        bar_r, bar_f = element_bars_mm(args, geom)
+        stubs = f"{bar_r:g}" if abs(bar_r - bar_f) < 1e-6 else f"{bar_r:g} (rear) / {bar_f:g} (front)"
+        bom.append(f"T-match: per driven element 2 stubs of {stubs} mm and a {bars} "
                    f"mm bar, {args.tap_wire_mm or diam:g} mm wire or tube, cut at the bar center; insulating support at "
                    "the cut")
     if c_pf:
@@ -2791,9 +2915,10 @@ def build_sheet_data(args, geom, line, zin=None, perf=None):
     data["bill_of_materials"] = bom
     data["tuning_procedure"] = list(TUNING_STEPS)
     if tmatch:
-        data["tuning_procedure"].insert(4, "(b2) T-match: move the taps of both elements together (same distance from "
-                                           "each center) for the F/B optimum, then set the series capacitor for X = 0 "
-                                           "at the design frequency.")
+        data["tuning_procedure"].insert(4, "(b2) T-match: the two taps set the amplitude and phase relation of the "
+                                           "element currents and the input impedance: move the rear tap (both of its "
+                                           "stubs alike) for the deepest rear null, then the front tap, and repeat; then "
+                                           "set the series capacitor for X = 0 at the design frequency.")
     if pars:
         data["tuning_procedure"].insert(3, "(a2) Reflectors and directors: cut them to the NEC lengths and place them at "
                                            "the listed positions; they are passive, so only the front/rear F/B and gain "
@@ -2812,7 +2937,8 @@ def build_sheet_data(args, geom, line, zin=None, perf=None):
              f"1 mm of element spacing = {deg_per_mm_spacing:.3f} deg of spacing phase (kd)"]
     if mc:
         mc_txt = [f"Monte-Carlo ({mc.get('samples', '?')} samples, {mc_dist_text(tol)}; {mc_tolerance_text(tol)}): "
-                  f"10th percentile F/B sector {mc['fb_p10']:.2f} dB, 10th percentile score {mc['score_p10']:.2f}"
+                  f"10th percentile F/B ({mc.get('fb_metric', 'sector')}) {mc['fb_p10']:.2f} dB, 10th percentile score "
+                  f"{mc['score_p10']:.2f}"
                   + (f", 90th percentile VSWR {mc['vswr_p90']:.2f}" if mc.get("vswr_p90") not in (None, "") else "")]
         tl_mm = tol.get("length_mm")
         if isinstance(tl_mm, (int, float)):
@@ -2857,6 +2983,16 @@ def build_sheet_data(args, geom, line, zin=None, perf=None):
                       "nec_sensitivity": [x for x in lines_vf if x]})
     data["risks"] = risks
     return data
+
+
+def element_taps_mm(args, geom=None):
+    """(rear, front) T-match tap distances in mm: from geom (optimize) or from --tap-rear-mm / --tap-front-mm, both
+    defaulting to --tap-mm."""
+    geom = geom or {}
+    base = getattr(args, "tap_mm", None) or DEFAULT_TAP_MM
+    rear = geom.get("tap_rear_mm") or getattr(args, "tap_mm_rear", None) or base
+    front = geom.get("tap_front_mm") or getattr(args, "tap_mm_front", None) or base
+    return float(rear), float(front)
 
 
 def mc_dist_text(tol):
@@ -2966,8 +3102,14 @@ def render_build_sheet_md(d, args):
     tm = d.get("tmatch")
     if tm:
         L += ["### 3b. T-match", "",
-              f"- Tap distance from each element center: {tm['tap_from_center_mm']:g} mm (bar {tm['bar_length_mm']:g} mm)",
-              f"- Bar offset from the element (toward the other element): {tm['bar_offset_mm']:g} mm",
+              (f"- Tap distance from each element center: {tm['tap_rear_mm']:g} mm (bar {tm['bar_length_rear_mm']:g} mm)"
+               if tm.get("tap_from_center_mm") is not None else
+               f"- Tap distance from the element center: rear {tm['tap_rear_mm']:g} mm (bar "
+               f"{tm['bar_length_rear_mm']:g} mm), front {tm['tap_front_mm']:g} mm (bar {tm['bar_length_front_mm']:g} mm)"),
+              (f"- Bar offset from the element (toward the other element): {tm['bar_offset_rear_mm']:g} mm"
+               if tm.get("bar_offset_mm") is not None else
+               f"- Bar offset from the element (toward the other element): rear {tm['bar_offset_rear_mm']:g} mm, front "
+               f"{tm['bar_offset_front_mm']:g} mm"),
               f"- Wire diameter of bar and stubs: {tm['wire_diameter_mm']:g} mm"] + [f"- {n}" for n in tm["notes"]] + [""]
     # 4
     fd = d["feed"]
@@ -3052,7 +3194,7 @@ def render_build_sheet_md(d, args):
             L += ["| Metric | Value |", "|---|---|",
                   f"| Samples | {mc.get('samples', '')} |",
                   f"| Score, 10th percentile | {mc['score_p10']:.2f} |",
-                  f"| F/B sector, 10th percentile | {mc['fb_p10']:.2f} dB |",
+                  f"| F/B ({mc.get('fb_metric', 'sector')}), 10th percentile | {mc['fb_p10']:.2f} dB |",
                   "| VSWR, 90th percentile | " + (f"{mc['vswr_p90']:.2f}" if mc.get("vswr_p90") not in (None, "") else "n/a") + " |"]
             tol = mc.get("tolerances")
             if tol:
@@ -3060,6 +3202,16 @@ def render_build_sheet_md(d, args):
             L.append("")
         else:
             L += ["Not run: use `--mode optimize --tolerance-mc 100` (or more) to fill this table.", ""]
+        sens = pf.get("sensitivity")
+        if sens:
+            L += ["Tolerance sensitivity (one dimension at a time, both directions; phase line, series capacitor and "
+                  "matching network as built):", "",
+                  f"| Dimension | Tolerance | Score drop (dB) | F/B ({sens['fb_metric']}) drop (dB) | Gain drop (dB) | "
+                  "abs(dZin) (ohm) |", "|---|---|---|---|---|---|"]
+            L += [f"| {r['dimension']} | {r['tolerance']} | {r['score_drop']:.2f} | {r['fb_drop']:.2f} | "
+                  f"{r['gain_drop']:.3f} | {r['zin_shift']:.2f} |" for r in sens["rows"]]
+            L += ["", f"Score drop {sens['score_drop_sum']:.2f} dB worst case (linear sum), {sens['score_drop_rss']:.2f} dB "
+                  f"RSS; F/B drop {sens['fb_drop_sum']:.2f} dB worst case, {sens['fb_drop_rss']:.2f} dB RSS.", ""]
     L += [f"{n}" for n in d.get("performance_notes", [])] + ([""] if d.get("performance_notes") else [])
     L += ["Not included in the figures above: " + "; ".join(d.get("not_included", [])) + ".", ""]
     # 6
@@ -4065,6 +4217,7 @@ def print_pattern_summary(m, zin=None, target=None, ground="free"):
     if m.get("cone_points"):
         print(f"  F/B rear cone (any elevation within the sector half-angle of the back direction): "
               f"{m['cone_fb']:.2f} dB, worst at theta={m['cone_worst_theta']:g}, phi={m['cone_worst_phi']:g}")
+        print(f"  F/B rear average (forward gain minus the power average of that cone): {m['rear_avg_fb']:.2f} dB")
     print(f"  half-power beamwidth in azimuth: {m['hpbw']:.1f} deg")
     if ground != "free" and takeoff > 60:
         print("  WARNING: the pattern peaks above 60 deg elevation (NVIS-like); F/B at that angle says little "
@@ -4078,7 +4231,8 @@ def print_pattern_summary(m, zin=None, target=None, ground="free"):
         print(line)
 
 
-FSWEEP_CSV_FIELDS = ["freq_mhz", "gain_dBi", "gain_dBd", "FB_point_dB", "FB_robust_dB", "FB_cone_dB", "takeoff_deg",
+FSWEEP_CSV_FIELDS = ["freq_mhz", "gain_dBi", "gain_dBd", "FB_point_dB", "FB_robust_dB", "FB_cone_dB", "FB_rear_avg_dB",
+                     "takeoff_deg",
                      "hpbw_deg",
                      "Zin_real", "Zin_imag", "VSWR_vs_target", "realized_gain_dB"]
 
@@ -4106,6 +4260,7 @@ def fsweep_pattern_report(args, exe, output):
                 w.writerow({"freq_mhz": f"{r['freq_mhz']:.6g}", "gain_dBi": r["forward_gain"],
                             "gain_dBd": r["gain_dbd"] if r["gain_dbd"] is not None else "",
                             "FB_point_dB": r["fb"], "FB_robust_dB": r["robust_fb"], "FB_cone_dB": r["cone_fb"],
+                            "FB_rear_avg_dB": r["rear_avg_fb"],
                             "takeoff_deg": r["takeoff_deg"], "hpbw_deg": r["hpbw"],
                             "Zin_real": z.real if z is not None else "", "Zin_imag": z.imag if z is not None else "",
                             "VSWR_vs_target": r["vswr"] if r["vswr"] is not None else "",
@@ -4353,8 +4508,8 @@ def simulate_model(exe, td, name, gargs, freqs, rear_start=150, rear_end=210, pt
                 if c_auto:
                     zins = [z + series_c_impedance(c_auto, fr, series_c_q(gargs)) for z, fr in zip(zins, chunk)]
             for fr, th, sec, zin, zport in zip(chunk, thetas, sections, zins, zports):
-                points, n_exp = ring_from_section(sec, th, getattr(gargs, "az_step", None))
-                m = add_cone_metrics(ring_metrics(points, n_exp, th, rear_start, rear_end,
+                points, n_exp, nulls = ring_from_section(sec, th, getattr(gargs, "az_step", None))
+                m = add_cone_metrics(ring_metrics(points, n_exp, th, rear_start, rear_end, nulls=nulls,
                                                   ground_free=not over_ground), sec, rear_start, rear_end)
                 apply_gain_offset(m, series_c_loss_db(zin, zport))
                 m.update(freq_mhz=fr, takeoff_deg=90.0 - th, zin=zin, zin_port=zport, vswr=None, realized=None,
@@ -4371,8 +4526,11 @@ def simulate_model(exe, td, name, gargs, freqs, rear_start=150, rear_end=210, pt
 
 
 def _sim_worker(job):
-    """ProcessPoolExecutor entry point (module level so it can be pickled)."""
+    """ProcessPoolExecutor entry point (module level so it can be pickled): geometry_worker for a job with
+    kind='geometry', otherwise simulate_model."""
     try:
+        if job.get("kind") == "geometry":
+            return geometry_worker(job)
         return simulate_model(**job)
     except Exception as exc:   # a worker must never take the pool down
         return {"ok": False, "stage": "internal", "reason": f"{type(exc).__name__}: {exc}"}
@@ -4418,46 +4576,57 @@ PROBE_GRID_STEP_DEG = 1.0   # theta/phi step of the probe pattern grid over grou
 
 
 def _probe_rp_cards(gargs):
-    """RP cards of the probe decks. Free space: the horizon ring at --az-step plus the 5 degree rear half-sphere grid
-    of the rear-cone F/B. Over ground: the upper half-sphere on a PROBE_GRID_STEP_DEG grid, from which the elevation
-    cut (take-off angle), the ring at that angle and the rear cone are taken."""
+    """RP cards of the probe decks. Free space: the horizon ring at --az-step plus the rear-cone grids (cone_grid_cards).
+    Over ground: the upper half-sphere on a PROBE_GRID_STEP_DEG grid, from which the elevation cut (take-off angle),
+    the ring at that angle and the rear cone are taken."""
     if getattr(gargs, "ground", "free") == "free":
         step = gargs.az_step
-        return [f"RP 0 1 {int(round(360.0 / step)) + 1} 1000 90 0 0 {step:.8g}", "RP 0 37 37 1000 0 90 5 5"]
+        return ([f"RP 0 1 {int(round(360.0 / step)) + 1} 1000 90 0 0 {step:.8g}"]
+                + cone_grid_cards(90.0, getattr(gargs, "cone_half_deg", None) or DEFAULT_CONE_HALF_DEG, False))
     s = PROBE_GRID_STEP_DEG
     return [f"RP 0 {int(round(90.0 / s)) + 1} {int(round(360.0 / s)) + 1} 1000 0 0 {s:g} {s:g}"]
 
 
-def two_port_response(exe, gargs, td):
-    """Y, M and far fields F of the two feed ports of the model gargs at gargs.freq (see the section comment);
-    ValueError or OSError when a probe run fails."""
-    out = {}
+def two_port_response(exe, gargs, td, freqs=None):
+    """Y, M and far fields F of the two feed ports of the model gargs (see the section comment); ValueError or
+    OSError when a probe run fails. freqs=None: the response at gargs.freq (one dict). With a list of frequencies the
+    two probe decks carry one FR group per frequency and the result is a list of dicts in that order (two nec2c runs
+    in total). The geometry is always the one of gargs.freq."""
+    fl = [gargs.freq] if freqs is None else list(freqs)
+    per = [{} for _ in fl]
     td = Path(td)
     for p in ("front", "rear"):
-        a = _variant(gargs, probe_port=p, fsweep=None, fsweep_pattern=False, band_freqs=None, pattern_mode="ring",
+        a = _variant(gargs, probe_port=p, fsweep=None, fsweep_pattern=False, band_freqs=fl, pattern_mode="ring",
                      ring_theta=90.0, pt_mode=0, rear_cone_rp=False, series_c_pf=None)
         deck_text, *_, info = build_deck(a)
-        deck = deck_text.splitlines()
-        cut = next(i for i, l in enumerate(deck) if l.startswith("RP"))
-        deck = deck[:cut] + _probe_rp_cards(a) + [l for l in deck[cut:] if not l.startswith("RP")]
+        deck = []
+        for line in deck_text.splitlines():
+            if line.startswith("RP"):
+                deck += _probe_rp_cards(a)      # every frequency group gets the probe pattern grids
+            else:
+                deck.append(line)
         out_path = _run_deck(exe, td, td / f"probe_{p}.nec", "\n".join(deck))
-        _read_checked(out_path)
-        rows = parse_element_currents(out_path)
-        for q in ("front", "rear"):
-            out[("Y", q, p)] = segment_current(rows, *info["feed_ports"][q])
-            out[("M", q, p)] = segment_current(rows, *info["ports"][q])
-        out[("F", p)] = parse_pattern_fields(Path(out_path).read_text(errors="replace"))
-    out["ground_free"] = getattr(gargs, "ground", "free") == "free"
-    return out
+        text, _ = _read_checked(out_path)
+        validate_input_table(out_path)
+        blocks = nec_blocks(text)[1:]
+        if len(blocks) != len(fl):
+            raise ValueError(f"probe run: expected {len(fl)} frequency blocks, found {len(blocks)}")
+        for i, blk in enumerate(blocks):
+            rows = parse_element_currents(out_path, freq_section=i, text=text)
+            for q in ("front", "rear"):
+                per[i][("Y", q, p)] = segment_current(rows, *info["feed_ports"][q])
+                per[i][("M", q, p)] = segment_current(rows, *info["ports"][q])
+            per[i][("F", p)] = pattern_fields_of_lines(blk[1])
+    for r, fr in zip(per, fl):
+        r["ground_free"] = getattr(gargs, "ground", "free") == "free"
+        r["freq_mhz"] = fr
+    return per[0] if freqs is None else per
 
 
-def parse_pattern_fields(text):
-    """{(theta, phi): (total gain dB, E_theta, E_phi)} of the pattern points of the first frequency block, with the
+def pattern_fields_of_lines(lines):
+    """{(theta, phi): (total gain dB, E_theta, E_phi)} of the pattern rows of one frequency block (lines), with the
     complex far-field components (the fields of different runs at the same frequency superpose)."""
-    out = {}
-    blocks = nec_blocks(text)
-    lines = blocks[1][1] if len(blocks) > 1 else blocks[0][1]
-    on = False
+    out, on = {}, False
     for line in lines:
         if "RADIATION PATTERNS" in line:
             on = True
@@ -4473,32 +4642,81 @@ def parse_pattern_fields(text):
     return out
 
 
-def _far_voltage(resp, z0, elec_deg, crossed, feed):
-    """Voltage of the far port (fed port at 1 V) for a line z0 / elec_deg; None when the line is singular."""
+def parse_pattern_fields(text):
+    """pattern_fields_of_lines of the first frequency block of a nec2c output text."""
+    blocks = nec_blocks(text)
+    return pattern_fields_of_lines(blocks[1][1] if len(blocks) > 1 else blocks[0][1])
+
+
+def tl_abcd(z0, elec_deg):
+    """ABCD parameters (A, B, C, D) of an ideal line of characteristic impedance z0 and electrical length elec_deg."""
+    t = math.radians(elec_deg)
+    return math.cos(t), 1j * z0 * math.sin(t), 1j * math.sin(t) / z0, math.cos(t)
+
+
+def lc_abcd(ind_h, cap_f, freq_mhz):
+    """ABCD parameters of the ideal low-pass pi network (series ind_h, cap_f at each port) at freq_mhz."""
+    w = 2 * math.pi * freq_mhz * 1e6
+    z, y = 1j * w * ind_h, 1j * w * cap_f
+    a = 1.0 + z * y
+    return a, z, y * (2.0 + z * y), a
+
+
+def phase_network_abcd(network, z0, elec_deg_f0, freq_mhz, f0_mhz):
+    """ABCD parameters at freq_mhz of the phase network designed for elec_deg_f0 degrees at f0_mhz: a TL of fixed
+    physical length (its electrical length scales with the frequency) or the LC pi network whose components give
+    elec_deg_f0 degrees at f0_mhz with characteristic impedance z0."""
+    if network == "lc":
+        ind, cap = lc_pi_values(elec_deg_f0, z0, f0_mhz)
+        return lc_abcd(ind, cap, freq_mhz)
+    return tl_abcd(z0, elec_deg_f0 * freq_mhz / f0_mhz)
+
+
+def _far_voltage(resp, z0, elec_deg, crossed, feed, abcd=None):
+    """Voltage of the far port (fed port at 1 V) for a line z0 / elec_deg, or for the network of ABCD parameters abcd;
+    None when the network is singular. With the far port voltage V_d and current I_d = Y[d][f] + Y[d][d] V_d, the
+    network carries V_2 = s V_d and I_2 = s I_d, so 1 = s (A V_d + B I_d)."""
     f, d = (feed, "rear" if feed == "front" else "front")
     s = -1.0 if crossed else 1.0
-    t = math.radians(elec_deg)
-    den = math.cos(t) + 1j * z0 * math.sin(t) * resp[("Y", d, d)]
+    a_, b_, _c, _d = abcd if abcd is not None else tl_abcd(z0, elec_deg)
+    den = a_ + b_ * resp[("Y", d, d)]
     if abs(den) < 1e-15:
         return None
-    return (s - 1j * z0 * math.sin(t) * resp[("Y", d, f)]) / den
+    return (s - b_ * resp[("Y", d, f)]) / den
 
 
-def line_pattern_metrics(resp, z0, elec_deg, crossed, feed, rear_sector):
-    """Pattern metrics of the antenna fed through the line z0 / elec_deg, from the superposition of the two probe
-    patterns (fed port at 1 V, far port at V_d) and the input power at the fed port; the gain is calibrated on the
-    fed probe's own printed gain at its maximum. Free space: the horizon ring; over ground: the ring at the take-off
-    angle of the superposed elevation cut (phi = 0). Returns forward_gain (dBi, phi = 0), fb_point, fb_sector,
-    fb_cone (rear cone of the rear-sector half-angle, any elevation), theta_deg; None when the probe patterns lack
-    the field columns."""
+def probe_calibration(resp, ef, ref, p_f):
+    """Factor k with power gain = k |E|^2 / P_in for the fields of resp: resp['k0'] when the responses carry it (a
+    multiport reduced to two ports, whose fields have no printed gain), otherwise from the fed probe's printed gain at
+    its maximum (ref) and its input power p_f. None when it cannot be formed."""
+    if resp.get("k0"):
+        return resp["k0"]
+    e2_ref = abs(ef[ref][1]) ** 2 + abs(ef[ref][2]) ** 2
+    if e2_ref <= 0:
+        return None
+    return 10.0 ** (ef[ref][0] / 10.0) * p_f / e2_ref
+
+
+def _gain_db(g):
+    """Power gain (linear) to dB with the G_FLOOR_DB floor."""
+    return max(10.0 * math.log10(g), G_FLOOR_DB) if g > 1e-30 else G_FLOOR_DB
+
+
+def line_pattern_metrics(resp, z0, elec_deg, crossed, feed, rear_sector, abcd=None):
+    """Pattern metrics of the antenna fed through the line z0 / elec_deg (or the network abcd), from the superposition
+    of the two probe patterns (fed port at 1 V, far port at V_d) and the input power at the fed port; the gain is
+    calibrated on the fed probe's own printed gain at its maximum. Free space: the horizon ring; over ground: the ring
+    at the take-off angle of the superposed elevation cut (phi = 0). Returns forward_gain (dBi, phi = 0), fb_point,
+    fb_sector, fb_cone (rear cone of the rear-sector half-angle, any elevation), fb_rear_avg (power average of the cone
+    on the CONE_FINE_STEP grid), theta_deg; None when the probe patterns lack the field columns."""
     f, d = (feed, "rear" if feed == "front" else "front")
     ef, ed = resp.get(("F", f)), resp.get(("F", d))
     if not ef or not ed:
         return None
-    vd = _far_voltage(resp, z0, elec_deg, crossed, feed)
+    vd = _far_voltage(resp, z0, elec_deg, crossed, feed, abcd)
     if vd is None:
         return None
-    zin = line_response(resp, z0, elec_deg, crossed, feed)[1]
+    zin = line_response(resp, z0, elec_deg, crossed, feed, abcd)[1]
     if not cmath.isfinite(zin) or zin == 0:
         return None
     p_in = 0.5 * (1.0 / zin).real
@@ -4511,29 +4729,35 @@ def line_pattern_metrics(resp, z0, elec_deg, crossed, feed, rear_sector):
     keys, ref = resp["_common"][(f, d)]
     if ref is None or p_in <= 0 or p_f <= 0:
         return None
-    e2_ref = abs(ef[ref][1]) ** 2 + abs(ef[ref][2]) ** 2
-    if e2_ref <= 0:
+    k_cal = probe_calibration(resp, ef, ref, p_f)
+    if k_cal is None:
         return None
-    k_cal = 10.0 ** (ef[ref][0] / 10.0) * p_f / e2_ref
-
-    def gain(key):
-        eth = ef[key][1] + vd * ed[key][1]
-        eph = ef[key][2] + vd * ed[key][2]
-        g = k_cal * (abs(eth) ** 2 + abs(eph) ** 2) / p_in
-        return 10.0 * math.log10(g) if g > 1e-30 else -999.0
-
     cache = resp.setdefault("_keys", {}).setdefault(feed, {})
+
+    def fields(keys_):
+        """(E_f theta, E_d theta, E_f phi, E_d phi) of each key, for the vectorized gains below."""
+        return [(ef[k][1], ed[k][1], ef[k][2], ed[k][2]) for k in keys_]
+
+    kp = k_cal / p_in
+
+    def powers(arr):
+        """Linear power gains of the directions arr."""
+        return [kp * (abs(a + vd * b) ** 2 + abs(c + vd * d_) ** 2) for a, b, c, d_ in arr]
+
+    def gains(arr):
+        return [_gain_db(g) for g in powers(arr)]
+
     if resp.get("ground_free", True):
         theta = 90.0
     else:
         if "cut" not in cache:
-            cache["cut"] = sorted((k for k in keys if k[1] == 0.0), key=lambda k: k[0])
-        cut = cache["cut"]
-        if not cut:
+            cut_k = sorted((k for k in keys if k[1] == 0.0), key=lambda k: k[0])
+            cache["cut"] = (cut_k, fields(cut_k))
+        cut_k, cut_f = cache["cut"]
+        if not cut_k:
             return None
         best = None
-        for k in cut:                      # >= : on a flat maximum keep the lowest elevation (largest theta)
-            g = gain(k)
+        for k, g in zip(cut_k, gains(cut_f)):    # >= : on a flat maximum keep the lowest elevation (largest theta)
             if best is None or g >= best[1]:
                 best = (k[0], g)
         theta = best[0]
@@ -4548,24 +4772,36 @@ def line_pattern_metrics(resp, z0, elec_deg, crossed, feed, rear_sector):
         cone_k = [(th, ph) for (th, ph) in keys
                   if (math.sin(math.radians(th)) * math.cos(math.radians(ph)) * back[0]
                       + math.cos(math.radians(th)) * back[2]) >= cos_half]
-        cache[ckey] = (ring_k, cone_k)
-    ring, cone_k = cache[ckey]
-    if 0.0 not in ring:
+        fine_w = [math.sin(math.radians(k[0])) if _on_fine_grid(*k) else 0.0 for k in cone_k]
+        rear_k = [ring_k[ph] for ph in ring_k if rear_sector[0] <= ph <= rear_sector[1]]
+        special = [ring_k.get(0.0), ring_k.get(180.0)]
+        cache[ckey] = (ring_k, fields(cone_k), fine_w, fields(rear_k),
+                       fields([k for k in special if k is not None]), [k is not None for k in special])
+    ring, cone_f, fine_w, rear_f, spec_f, spec_ok = cache[ckey]
+    if not spec_ok[0] or not rear_f:
         return None
-    rear = [gain(ring[ph]) for ph in ring if rear_sector[0] <= ph <= rear_sector[1]]
-    if not rear:
-        return None
-    fwd = gain(ring[0.0])
-    worst = max([max(rear)] + [gain(k) for k in cone_k])
-    return {"forward_gain": fwd, "fb_sector": fwd - max(rear), "fb_cone": fwd - worst,
-            "fb_point": fwd - gain(ring[180.0]) if 180.0 in ring else None, "theta_deg": theta}
+    sg = gains(spec_f)
+    fwd = sg[0]
+    back_g = sg[1] if spec_ok[1] else None
+    rear = _gain_db(max(powers(rear_f)))
+    cone_p = powers(cone_f)
+    worst = max(rear, _gain_db(max(cone_p))) if cone_p else rear
+    avg = None
+    if sum(1 for w in fine_w if w > 0) >= 9:
+        den = sum(fine_w)
+        num = sum(w * max(g, 10.0 ** (G_FLOOR_DB / 10.0)) for w, g in zip(fine_w, cone_p) if w > 0)
+        avg = 10.0 * math.log10(max(num / den, 1e-30)) if den > 0 else None
+    return {"forward_gain": fwd, "fb_sector": fwd - rear, "fb_cone": fwd - worst,
+            "fb_rear_avg": fwd - (avg if avg is not None else rear),
+            "fb_point": fwd - back_g if back_g is not None else None, "theta_deg": theta}
 
 
-def line_response(resp, z0, elec_deg, crossed, feed="front"):
-    """(far/fed element-current ratio, input impedance at the fed port) of a line z0 / elec_deg on resp."""
+def line_response(resp, z0, elec_deg, crossed, feed="front", abcd=None):
+    """(far/fed element-current ratio, input impedance at the fed port) of a line z0 / elec_deg (or of the network
+    abcd) on resp."""
     f, d = (feed, "rear" if feed == "front" else "front")
     s = -1.0 if crossed else 1.0
-    t = math.radians(elec_deg)
+    _a, _b, c_, d_ = abcd if abcd is not None else tl_abcd(z0, elec_deg)
 
     def Y(a, b):
         return resp[("Y", a, b)]
@@ -4573,14 +4809,227 @@ def line_response(resp, z0, elec_deg, crossed, feed="front"):
     def M(a, b):
         return resp[("M", a, b)]
 
-    vd = _far_voltage(resp, z0, elec_deg, crossed, feed)
+    vd = _far_voltage(resp, z0, elec_deg, crossed, feed, abcd)
     if vd is None:
         return complex("nan"), complex("nan")
     i_fed = M(f, f) + M(f, d) * vd
     ratio = (M(d, f) + M(d, d) * vd) / i_fed if abs(i_fed) > 1e-30 else complex("nan")
-    i_line = s * (1j * math.sin(t) / z0 * vd + math.cos(t) * (Y(d, f) + Y(d, d) * vd))
+    i_line = s * (c_ * vd + d_ * (Y(d, f) + Y(d, d) * vd))
     y_in = Y(f, f) + Y(f, d) * vd + i_line
     return ratio, (1.0 / y_in if abs(y_in) > 1e-30 else complex("inf"))
+
+
+def superposed_section(resp, z0, elec_deg, crossed, feed, abcd=None):
+    """Pattern section ({"freq_mhz", "points"} as parse_pattern_sections gives it: (vertical, horizontal, total dB,
+    0)) of the antenna fed through the line z0 / elec_deg (or the network abcd), from the superposed probe fields on
+    every direction of the probe grids, with the gain calibration of line_pattern_metrics. None when the probe patterns
+    lack the field columns or the network is singular."""
+    f, d = (feed, "rear" if feed == "front" else "front")
+    ef, ed = resp.get(("F", f)), resp.get(("F", d))
+    if not ef or not ed:
+        return None
+    vd = _far_voltage(resp, z0, elec_deg, crossed, feed, abcd)
+    if vd is None:
+        return None
+    zin = line_response(resp, z0, elec_deg, crossed, feed, abcd)[1]
+    if not cmath.isfinite(zin) or zin == 0:
+        return None
+    p_in = 0.5 * (1.0 / zin).real
+    p_f = 0.5 * resp[("Y", f, f)].real
+    common = [k for k in ef if k in ed]
+    ref = max(common, key=lambda k: ef[k][0], default=None)
+    if ref is None or p_in <= 0 or p_f <= 0:
+        return None
+    k_cal = probe_calibration(resp, ef, ref, p_f)
+    if k_cal is None:
+        return None
+    k_cal /= p_in
+    pts = {}
+    for key in common:
+        gv = k_cal * abs(ef[key][1] + vd * ed[key][1]) ** 2
+        gh = k_cal * abs(ef[key][2] + vd * ed[key][2]) ** 2
+        pts[key] = (_gain_db(gv), _gain_db(gh), _gain_db(gv + gh), 0.0)
+    return {"freq_mhz": resp.get("freq_mhz"), "points": pts}
+
+
+def predicted_rows(resps, gargs, t0, z0, rear_start, rear_end):
+    """Per-frequency rows in the layout of simulate_model for the antenna with the phase network of t0 degrees (at the
+    design frequency) and impedance z0, from the probe responses resps: the superposed pattern (ring at the horizon in
+    free space, at the take-off angle of the elevation cut over ground, rear-cone grids), Zin with the series capacitor
+    of gargs (auto: the one that cancels X_in at the design frequency) and the gain change of its ESR. None when a
+    pattern cannot be formed."""
+    f0 = gargs.freq
+    over_ground = getattr(gargs, "ground", "free") != "free"
+    raw = []
+    for r in resps:
+        fr = r["freq_mhz"]
+        abcd = phase_network_abcd(gargs.network, z0, t0, fr, f0)
+        sec = superposed_section(r, z0, t0, gargs.crossed, gargs.feed_element, abcd)
+        zport = line_response(r, z0, t0, gargs.crossed, gargs.feed_element, abcd)[1]
+        if sec is None or not cmath.isfinite(zport):
+            return None
+        raw.append((fr, sec, zport))
+    di = min(range(len(raw)), key=lambda i: abs(raw[i][0] - f0))
+    if getattr(gargs, "series_c_pf", None) == "auto":
+        c_pf = series_c_for_x(raw[di][2].imag, raw[di][0])
+    else:
+        c_pf = series_c_value(gargs)
+    q = series_c_q(gargs)
+    rows = []
+    for fr, sec, zport in raw:
+        th = elevation_peak_theta(sec) if over_ground else 90.0
+        points, n_exp, nulls = ring_from_section(sec, th, getattr(gargs, "az_step", None))
+        m = add_cone_metrics(ring_metrics(points, n_exp, th, rear_start, rear_end, nulls=nulls,
+                                          ground_free=not over_ground), sec, rear_start, rear_end)
+        zin = zport + series_c_impedance(c_pf, fr, q) if c_pf else zport
+        apply_gain_offset(m, series_c_loss_db(zin, zport))
+        g = (zin - gargs.target_impedance) / (zin + gargs.target_impedance)
+        m.update(freq_mhz=fr, takeoff_deg=90.0 - th, zin=zin, zin_port=zport, series_c_pf=c_pf,
+                 vswr=(1 + abs(g)) / (1 - abs(g)) if abs(g) < 1 else float("inf"),
+                 realized=m["forward_gain"] + 10 * math.log10(max(1 - abs(g) ** 2, 1e-12)))
+        rows.append(m)
+    return rows
+
+
+def csolve(a, b):
+    """Solution x of the complex linear system a x = b (a: list of rows, b: list) by Gaussian elimination with
+    partial pivoting; ValueError for a singular matrix."""
+    n = len(a)
+    m = [list(row) + [bv] for row, bv in zip(a, b)]
+    for c in range(n):
+        piv = max(range(c, n), key=lambda r: abs(m[r][c]))
+        if abs(m[piv][c]) < 1e-300:
+            raise ValueError("singular port matrix")
+        m[c], m[piv] = m[piv], m[c]
+        for r in range(c + 1, n):
+            f = m[r][c] / m[c][c]
+            if f:
+                for k in range(c, n + 1):
+                    m[r][k] -= f * m[c][k]
+    x = [0j] * n
+    for r in range(n - 1, -1, -1):
+        x[r] = (m[r][n] - sum(m[r][k] * x[k] for k in range(r + 1, n))) / m[r][r]
+    return x
+
+
+def cinverse(a):
+    """Inverse of a complex square matrix (list of rows)."""
+    n = len(a)
+    cols = [csolve(a, [1.0 + 0j if i == j else 0j for i in range(n)]) for j in range(n)]
+    return [[cols[j][i] for j in range(n)] for i in range(n)]
+
+
+def multiport_response(exe, gargs, td, freqs):
+    """Port responses of the model gargs with a port at each feed point and at the center of every reflector/director:
+    one probe run per port (1 V on that port, every other port shorted by its continuous wire), with one FR group per
+    frequency. Returns a list (one per frequency) of dicts: ports (['front', 'rear', parasitic tags...]), Y {(a, b):
+    current at port a for 1 V at port b}, M {(element, b): current at the center of the driven element}, F {b: far
+    fields}, k0 (gain calibration, probe_calibration), freq_mhz, ground_free."""
+    fl = list(freqs)
+    info0 = build_deck(_variant(gargs, probe_port="front", band_freqs=fl, fsweep=None, fsweep_pattern=False,
+                                pattern_mode="ring", ring_theta=90.0, pt_mode=0, rear_cone_rp=False,
+                                series_c_pf=None))[5]
+    ports = ["front", "rear"] + sorted(info0["par_ports"])
+    seg_of = dict(info0["feed_ports"])
+    seg_of.update({t: (t, sg) for t, sg in info0["par_ports"].items()})
+    per = [{"ports": ports, "Y": {}, "M": {}, "F": {}, "freq_mhz": fr,
+            "ground_free": getattr(gargs, "ground", "free") == "free"} for fr in fl]
+    td = Path(td)
+    for b in ports:
+        a = _variant(gargs, probe_port=b if isinstance(b, str) else seg_of[b], fsweep=None, fsweep_pattern=False,
+                     band_freqs=fl, pattern_mode="ring", ring_theta=90.0, pt_mode=0, rear_cone_rp=False,
+                     series_c_pf=None)
+        deck = []
+        for line in build_deck(a)[0].splitlines():
+            deck += _probe_rp_cards(a) if line.startswith("RP") else [line]
+        out_path = _run_deck(exe, td, td / f"mport_{b}.nec", "\n".join(deck))
+        text, _ = _read_checked(out_path)
+        validate_input_table(out_path)
+        blocks = nec_blocks(text)[1:]
+        if len(blocks) != len(fl):
+            raise ValueError(f"multiport probe: expected {len(fl)} frequency blocks, found {len(blocks)}")
+        for i, blk in enumerate(blocks):
+            rows = parse_element_currents(out_path, freq_section=i, text=text)
+            for q in ports:
+                per[i]["Y"][(q, b)] = segment_current(rows, *seg_of[q])
+            for q in ("front", "rear"):
+                per[i]["M"][(q, b)] = segment_current(rows, *info0["ports"][q])
+            per[i]["F"][b] = pattern_fields_of_lines(blk[1])
+    for r in per:
+        ef = r["F"]["front"]
+        ref = max(ef, key=lambda k: ef[k][0], default=None)
+        r["k0"] = (probe_calibration({}, ef, ref, 0.5 * r["Y"][("front", "front")].real)
+                   if ref is not None else None)
+    return per
+
+
+def multiport_z(mp):
+    """Open-circuit impedance matrix {(a, b): Z} of a multiport response (the inverse of its short-circuit Y)."""
+    ports = mp["ports"]
+    zi = cinverse([[mp["Y"][(a, b)] for b in ports] for a in ports])
+    return {(a, b): zi[i][j] for i, a in enumerate(ports) for j, b in enumerate(ports)}
+
+
+def reduce_multiport(mp, loads):
+    """Two-port response (the layout of two_port_response) of a multiport response mp with the impedances loads
+    {parasitic port: Z ohm} in series at the parasitic ports: for 1 V on a feed port b (the other one shorted) the
+    parasitic port voltages are V_P = -(I + Z_L Y_PP)^-1 Z_L Y_Pb, and the reduced admittances, element currents and
+    far fields add the contributions of the parasitic ports. With every load zero it is the two-port of the structure."""
+    par = [p_ for p_ in mp["ports"] if not isinstance(p_, str)]
+    zl = [loads.get(p_, 0j) for p_ in par]
+    y, mm, ff = mp["Y"], mp["M"], mp["F"]
+    a_m = [[(1.0 if i == j else 0.0) + zl[i] * y[(p_, q)] for j, q in enumerate(par)] for i, p_ in enumerate(par)]
+    out = {"ground_free": mp["ground_free"], "freq_mhz": mp["freq_mhz"], "k0": mp["k0"]}
+    keys = None
+    for b in ("front", "rear"):
+        vp = csolve(a_m, [-zl[i] * y[(p_, b)] for i, p_ in enumerate(par)]) if par else []
+        for a in ("front", "rear"):
+            out[("Y", a, b)] = y[(a, b)] + sum(y[(a, p_)] * v for p_, v in zip(par, vp))
+            out[("M", a, b)] = mm[(a, b)] + sum(mm[(a, p_)] * v for p_, v in zip(par, vp))
+        if keys is None:
+            keys = [k for k in ff[b] if all(k in ff[q] for q in mp["ports"])]
+        fb = ff[b]
+        fl_ = {}
+        for k in keys:
+            eth, eph = fb[k][1], fb[k][2]
+            for p_, v in zip(par, vp):
+                eth += v * ff[p_][k][1]
+                eph += v * ff[p_][k][2]
+            fl_[k] = (0.0, eth, eph)
+        out[("F", b)] = fl_
+    return out
+
+
+def null_line_solution(resp, crossed, feed="front", theta=90.0):
+    """Lines (elec_deg, z0) that put an exact null in the back direction (theta, phi = 180), from the probe fields:
+    the far-port voltage of the null is the least-squares V_d = -(E_d^H E_f) / (E_d^H E_d) over both field components,
+    and the line must satisfy s = V_d cos t + j z0 K sin t with K = Y[d][f] + Y[d][d] V_d. Returns (V_d, [(elec_deg,
+    z0), ...]) with z0 > 0 only; an empty list when no line realizes it."""
+    f, d = (feed, "rear" if feed == "front" else "front")
+    key = (round(theta, 2), 180.0)
+    ef, ed = resp.get(("F", f), {}).get(key), resp.get(("F", d), {}).get(key)
+    if ef is None or ed is None:
+        return None, []
+    den = abs(ed[1]) ** 2 + abs(ed[2]) ** 2
+    if den <= 0:
+        return None, []
+    r = -(ed[1].conjugate() * ef[1] + ed[2].conjugate() * ef[2]) / den
+    s = -1.0 if crossed else 1.0
+    k = resp[("Y", d, f)] + resp[("Y", d, d)] * r
+    q = r.real * k.real + r.imag * k.imag
+    if abs(q) < 1e-30 or abs(k.real) < 1e-30:
+        return r, []
+    ct = s * k.real / q
+    if abs(ct) > 1.0:
+        return r, []
+    sols = []
+    for t in (math.acos(ct), 2.0 * math.pi - math.acos(ct)):
+        if abs(math.sin(t)) < 1e-9:
+            continue
+        z0 = -r.imag * math.cos(t) / (k.real * math.sin(t))
+        if z0 > 0:
+            sols.append((math.degrees(t) % 360.0, z0))
+    return r, sols
 
 
 def cardioid_target(feed_element, spacing_factor):
@@ -4681,12 +5130,25 @@ def synthesize_line(exe, gargs, elec_min, elec_max, td=None, objective=None):
     out = {"elec_deg": th, "ratio": ratio, "zin": zin, "error": abs(ratio - target), "target": target, "z0": z0,
            "exact": exact_line_solution(resp, target, gargs.crossed, gargs.feed_element), "range": (lo, hi),
            "at_limit": th - lo < 0.5 * cell or hi - th < 0.5 * cell}
+    theta_n = 90.0
     if err is objective_err:
         out["pattern"] = line_pattern_metrics(resp, z0, th, gargs.crossed, gargs.feed_element,
                                               objective["rear_sector"])
+        if out["pattern"]:
+            theta_n = out["pattern"]["theta_deg"]
         out["objective"] = objective["objective"]
         out["fb_metric"] = objective.get("fb_metric", "sector")
+    if gargs.network == "tl":
+        out["null"] = null_line_solution(resp, gargs.crossed, gargs.feed_element, theta_n)[1]
     return out
+
+
+def null_text(sols):
+    """Text of the null_line_solution lines (empty when none)."""
+    if not sols:
+        return ""
+    return ("; an exact rear null needs " + " or ".join(f"{t:.1f} deg at Z0 {z:.0f} ohm" for t, z in sols)
+            + " (--line-z0-range lets the optimizer choose Z0)")
 
 
 def synthesis_text(syn):
@@ -4694,7 +5156,7 @@ def synthesis_text(syn):
     lo, hi = syn.get("range", (0.0, 0.0))
     limit = (f" (at the limit of the allowed range {lo:.1f}..{hi:.1f} deg: the optimum lies outside it; see "
              "--max-line-deg, --line-allowance-mm, --no-crossed or --feed-element)" if syn.get("at_limit") else "")
-    return _synthesis_body(syn) + limit
+    return _synthesis_body(syn) + limit + null_text(syn.get("null"))
 
 
 def _synthesis_body(syn):
@@ -4726,6 +5188,552 @@ def line_scan_center(base, lo, hi, offsets):
     if base < shifted:
         base = min(shifted, max(base, hi))
     return base
+
+
+# ======================================================================================
+# Optimizer score, inner phase-network solver and search helpers (module level: used by the worker processes)
+# ======================================================================================
+
+DEFAULT_FB_CAP = 40.0             # dB: ceiling of the F/B in the score (--fb-cap)
+DEFAULT_BAND_SOFTNESS = 0.5       # dB: temperature of the smooth band minimum (--band-softness)
+DEFAULT_Q_WEIGHT = 0.2            # dB of score per unit of |X|/R above Q_FREE (--q-weight)
+AUTO_BAND_FRACTION = 0.007        # default --band: --freq +- this fraction, 3 points
+PAR_PROBE_DELTA = 0.01            # length-factor step of the parasitic elements for the multiport slope dX/dL
+PARASITIC_INNER_EVALS_PER_VAR = 15   # multiport-model evaluations per parasitic length (no nec2c runs)
+BAR_MIN_MM = 20.0                 # shortest T-bar offset the search uses
+BAR_MIN_DIAMETERS = 3.0           # and at least this many element diameters (NEC-2 accuracy of close conductors)
+BAR_MAX_MM = 120.0                # longest T-bar offset the search uses
+BAR_LINE_ROOM_M = 0.01            # room (m) the phase line needs between the two T-bars
+DEFAULT_REFINE_ROUNDS = 30       # pattern-search rounds (each round stops early at the step tolerance)
+BASIN_RADIUS = 0.08               # normalized distance between two starting points / Monte-Carlo designs
+RANK_INFEASIBLE_OFFSET = 1e3      # nm_value of a candidate outside the Zin window: this + its violation in ohm
+CONSTRAINT_RHO = 10.0             # dB of score per dB^2 of shortfall below --min-fb / --min-gain
+Q_FREE = 2.0                      # |X|/R at the design frequency below which --q-weight costs nothing
+
+
+def fb_saturate(fb, cap):
+    """F/B with a smooth ceiling: -10 log10(10^(-fb/10) + 10^(-cap/10)); fb itself when cap is None or <= 0. A rear
+    level below the ceiling adds almost nothing, so the score does not trade gain for a null no real antenna shows."""
+    if fb is None or not cap or cap <= 0 or not math.isfinite(cap):
+        return fb
+    return -10.0 * math.log10(10.0 ** (-fb / 10.0) + 10.0 ** (-cap / 10.0))
+
+
+def soft_min(values, tau):
+    """Smooth minimum of values: m - tau ln(mean(exp(-(v - m)/tau))), m = min(values); the plain minimum for tau <= 0.
+    Equal values return that value; a single low value dominates as tau -> 0."""
+    m = min(values)
+    if not tau or tau <= 0 or len(values) == 1:
+        return m
+    return m - tau * math.log(sum(math.exp(-(v - m) / tau) for v in values) / len(values))
+
+
+def rank_of(score, viol):
+    """Sort key (smaller = better): feasible by score, infeasible by violation then score."""
+    return (0, -score, 0.0) if viol <= 0 else (1, viol, -score)
+
+
+def rank_better(a, b):
+    """True when rank a is strictly better than rank b."""
+    if a[0] != b[0]:
+        return a[0] < b[0]
+    if a[1] < b[1] - 1e-9:
+        return True
+    return abs(a[1] - b[1]) <= 1e-9 and a[2] < b[2] - 1e-9
+
+
+def nm_value(rank):
+    """Scalar to minimize for a rank: -score when Zin is in its window, otherwise RANK_INFEASIBLE_OFFSET + violation."""
+    return rank[1] if rank[0] == 0 else RANK_INFEASIBLE_OFFSET + rank[1] + 1e-3 * rank[2]
+
+
+def zin_window_violation(per_freq, spec):
+    """(ohms by which Zin leaves the admissible window summed over the band, text of the first violation); 0 and ''
+    without a single feed point."""
+    if not spec["single"]:
+        return 0.0, ""
+    v, text = 0.0, ""
+    for pf in per_freq:
+        z = pf["zin"]
+        v += max(0.0, spec["r_min"] - z.real) + max(0.0, z.real - spec["r_max"]) + max(0.0, abs(z.imag) - spec["x_max"])
+        if not text:
+            if not spec["r_min"] <= z.real <= spec["r_max"]:
+                text = f"R_in={z.real:.1f} outside {spec['r_min']:g}..{spec['r_max']:g} at {pf['freq_mhz']:.3f} MHz"
+            elif abs(z.imag) > spec["x_max"]:
+                text = f"|X_in|={abs(z.imag):.1f} > {spec['x_max']:g} at {pf['freq_mhz']:.3f} MHz"
+    return v, text
+
+
+def apply_match_rows(per_freq, spec, design_i, net=None):
+    """--match-score: design the L-network at the design frequency (every solution tried, the lowest worst VSWR over
+    the band kept), build it with components of Q spec['match_q'] and store in every per-frequency row the matched VSWR
+    (m_vswr), the network dissipation plus residual mismatch (m_loss, dB) and the gain after them (m_gain). A given
+    net (the nominal design's network, in the Monte-Carlo) is used as built instead. Returns the network, or None when
+    Zin cannot be matched (R <= 0)."""
+    z_d = per_freq[design_i]["zin"]
+    target = spec["target"]
+    if net is None and z_d is not None and z_d.real > 0:
+        w0 = 2 * math.pi * spec["freq"] * 1e6
+        table = [(x["freq_mhz"], x["zin"]) for x in per_freq]
+        try:
+            net = lnet_with_q(lnet_select(z_d, target, w0, "best", table)[0], *spec["match_q"])
+        except ValueError:
+            net = None
+    for x in per_freq:
+        if net is None or x["zin"] is None or x["zin"].real <= 0:
+            x.update(m_vswr=math.inf, m_loss=math.inf, m_gain=-math.inf)
+            continue
+        w = 2 * math.pi * x["freq_mhz"] * 1e6
+        zi = lnet_zin(x["zin"], w, net)
+        tot = lnet_losses(x["zin"], w, net, target)[2]
+        x.update(m_vswr=lnet_metrics(zi, target)[0], m_loss=tot, m_gain=x["forward_gain"] - tot)
+    per_freq[design_i]["m_net"] = net
+    return net
+
+
+def optimizer_score(per_freq, spec, design_i, net=None):
+    """Score of one candidate from its per-frequency rows (the same for NEC rows and for rows predicted from the probe
+    responses). Per frequency the objective term is the capped F/B (--fb-cap) minus --loss-weight times the matching
+    loss (front-back), the gain (gain) or w_gain * gain + w_fb * capped F/B (balance); with --match-score the gain is the
+    one after the L-network and the VSWR the matched one. The band aggregate is the smooth minimum (--band-softness)
+    of the terms; from it are subtracted --vswr-weight * (max VSWR - 1), the quadratic shortfall penalties of --min-fb /
+    --min-gain and --q-weight per unit of |X_in|/R_in above Q_FREE at the design frequency. Returns a dict: score, worst
+    (index of the lowest term), violation (text), viol (ohm outside the Zin window), vmax, term (band aggregate),
+    vswr_pen, other_pen."""
+    single = spec["single"]
+    if single and spec["match_score"]:
+        apply_match_rows(per_freq, spec, design_i, net)
+    terms, vswrs, gains = [], [], []
+    for pf in per_freq:
+        if single and spec["match_score"]:
+            g_used, loss = pf["m_gain"], pf["m_loss"]
+        else:
+            g_used = pf["realized"] if (spec["realized_gain"] and pf.get("realized") is not None) else pf["forward_gain"]
+            loss = 0.0
+        fb = fb_saturate(pf[spec["fb_key"]], spec["fb_cap"])
+        if spec["objective"] == "front-back":
+            t = fb - spec["loss_weight"] * loss
+        elif spec["objective"] == "gain":
+            t = g_used
+        else:
+            t = spec["w_gain"] * g_used + spec["w_fb"] * fb
+        terms.append(t if math.isfinite(t) else -1e9)
+        gains.append(g_used if math.isfinite(g_used) else -1e9)
+        if single:
+            vswrs.append(pf["m_vswr"] if spec["match_score"] else pf["vswr"])
+    worst = min(range(len(terms)), key=lambda i: terms[i])
+    term = soft_min(terms, spec["softness"]) if min(terms) > -1e8 else -1e9
+    other = 0.0
+    if spec.get("min_fb") is not None:
+        short = max(0.0, spec["min_fb"] - min(pf[spec["fb_key"]] for pf in per_freq))
+        other += CONSTRAINT_RHO * short * short
+    if spec.get("min_gain") is not None:
+        short = max(0.0, spec["min_gain"] - min(gains))
+        other += CONSTRAINT_RHO * short * short
+    if single and spec.get("q_weight"):
+        z = per_freq[design_i]["zin"]
+        if z is not None and z.real > 0:
+            other += spec["q_weight"] * max(0.0, abs(z.imag) / z.real - Q_FREE)
+    vmax, vpen = None, 0.0
+    score = term - other
+    if single:
+        vmax = max(vswrs)
+        if math.isfinite(vmax):
+            vpen = spec["vswr_weight"] * (vmax - 1)
+            score -= vpen
+        else:
+            score = -1e9
+    viol, text = zin_window_violation(per_freq, spec)
+    return {"score": score if term > -1e8 else -1e9, "worst": worst, "violation": text, "viol": viol, "vmax": vmax,
+            "term": term, "vswr_pen": vpen, "other_pen": other}
+
+
+def inner_rows(resps, gargs, t0, z0, spec):
+    """Per-frequency rows predicted from the probe responses resps (two_port_response with a frequency list) for the
+    phase network of t0 degrees at the design frequency and impedance z0, with the series capacitor of gargs (auto:
+    the one that cancels X_in at the design frequency). Returns (rows, series capacitor pF or None), or None when the
+    network is singular or a pattern cannot be formed."""
+    f0 = gargs.freq
+    raw = []
+    for r in resps:
+        fr = r["freq_mhz"]
+        abcd = phase_network_abcd(gargs.network, z0, t0, fr, f0)
+        m = line_pattern_metrics(r, z0, t0, gargs.crossed, gargs.feed_element, spec["rear_sector"], abcd)
+        if m is None:
+            return None
+        zport = line_response(r, z0, t0, gargs.crossed, gargs.feed_element, abcd)[1]
+        if not cmath.isfinite(zport):
+            return None
+        raw.append((fr, m, zport))
+    di = min(range(len(raw)), key=lambda i: abs(raw[i][0] - f0))
+    c_pf = None
+    if getattr(gargs, "series_c_pf", None) == "auto":
+        c_pf = series_c_for_x(raw[di][2].imag, raw[di][0])
+    else:
+        c_pf = series_c_value(gargs)
+    q = series_c_q(gargs)
+    rows = []
+    for fr, m, zport in raw:
+        zin = zport + series_c_impedance(c_pf, fr, q) if c_pf else zport
+        off = series_c_loss_db(zin, zport)
+        g = m["forward_gain"] + off
+        row = {"freq_mhz": fr, "forward_gain": g, "fb": m["fb_point"] if m["fb_point"] is not None else m["fb_sector"],
+               "robust_fb": m["fb_sector"], "cone_fb": m["fb_cone"], "rear_avg_fb": m["fb_rear_avg"], "zin": zin,
+               "zin_port": zport, "theta_deg": m["theta_deg"]}
+        gam = (zin - spec["target"]) / (zin + spec["target"])
+        row["vswr"] = (1 + abs(gam)) / (1 - abs(gam)) if abs(gam) < 1 else math.inf
+        row["realized"] = g + 10 * math.log10(max(1 - abs(gam) ** 2, 1e-12))
+        rows.append(row)
+    return rows, c_pf
+
+
+def robust_draws(n, seed):
+    """n common-random-number draws (u_line, u_vf, u_z0, u_c) uniform in [-1, 1] for the inner robustness."""
+    rng = random.Random(seed)
+    return [tuple(rng.uniform(-1.0, 1.0) for _ in range(4)) for _ in range(n)]
+
+
+def inner_solve(resps, gargs, spec, design_i, t_lo, t_hi, z0_bounds=None, robust=None):
+    """Phase network that maximizes the optimizer score of the geometry whose probe responses are resps: the electrical
+    length t0 in [t_lo, t_hi] (degrees at the design frequency) and, with z0_bounds (MIN, MAX), the line impedance.
+    1-D: a grid of at most 1 degree cells and a golden-section polish of the best cell. 2-D: the 1-D grid at seven
+    impedances spread geometrically over z0_bounds and at the impedance of the exact rear null, then a Nelder-Mead polish
+    in (t0, ln z0). robust (dict with draws, line_deg, vf_pct, z0_pct, c_pct, net_fixed): the value is the 10th
+    percentile score over the line/VF/Z0/series-C draws, with the matching network of the nominal line kept (as built)
+    when net_fixed. Returns dict: elec_deg, z0, value (nm_value, smaller = better), score, rows, series_c_pf, null."""
+    z_nom = abs(gargs.coax_z0) if gargs.network == "tl" else gargs.lc_z0
+    if t_hi - t_lo < 1e-6:
+        t_hi = t_lo + 1e-6
+    cache = {}
+
+    def value(t, z):
+        key = (round(t, 6), round(z, 4))
+        if key in cache:
+            return cache[key]
+        out = (math.inf, None)
+        if t_lo - 1e-9 <= t <= t_hi + 1e-9 and z > 0:
+            got = inner_rows(resps, gargs, t, z, spec)
+            if got is not None:
+                rows, c_pf = got
+                res = optimizer_score(rows, spec, design_i)
+                val = nm_value(rank_of(res["score"], res["viol"]))
+                if robust and robust.get("draws") and res["viol"] <= 0:
+                    net = rows[design_i].get("m_net") if robust.get("net_fixed") else None
+                    scores = []
+                    for u_l, u_vf, u_z, u_c in robust["draws"]:
+                        t_s = t * (1.0 + u_vf * robust["vf_pct"] / 100.0) + u_l * robust["line_deg"]
+                        z_s = z * (1.0 + u_z * robust["z0_pct"] / 100.0)
+                        g_s = gargs
+                        if c_pf and robust.get("c_pct"):
+                            g_s = _variant(gargs, series_c_pf=c_pf * (1.0 + u_c * robust["c_pct"] / 100.0))
+                        got_s = inner_rows(resps, g_s, t_s, z_s, spec)
+                        if got_s is None:
+                            scores.append(-1e9)
+                            continue
+                        scores.append(optimizer_score(got_s[0], spec, design_i, net)["score"])
+                    val = -percentile(scores, 10)
+                out = (val, (rows, c_pf, res))
+        cache[key] = out
+        return out
+
+    def best_on_line(z, golden=True):
+        n = max(2, int(math.ceil((t_hi - t_lo) / 1.0)))
+        grid = [t_lo + (t_hi - t_lo) * i / n for i in range(n + 1)]
+        tb = min(grid, key=lambda t: value(t, z)[0])
+        if not golden:
+            return tb
+        a, b = max(t_lo, tb - (t_hi - t_lo) / n), min(t_hi, tb + (t_hi - t_lo) / n)
+        g = (math.sqrt(5.0) - 1.0) / 2.0
+        for _ in range(20):
+            c1, c2 = b - g * (b - a), a + g * (b - a)
+            if value(c1, z)[0] < value(c2, z)[0]:
+                b = c2
+            else:
+                a = c1
+        return min((tb, 0.5 * (a + b)), key=lambda t: value(t, z)[0])
+
+    null = []
+    if gargs.network == "tl":
+        try:
+            null = null_line_solution(resps[design_i], gargs.crossed, gargs.feed_element)[1]
+        except (KeyError, ZeroDivisionError, ValueError):
+            null = []
+    if not z0_bounds:
+        t_best, z_best = best_on_line(z_nom), z_nom
+    else:
+        zl, zh = z0_bounds
+        zs = [zl * (zh / zl) ** (i / 6.0) for i in range(7)] + [min(max(z, zl), zh) for _, z in null]
+        starts = [(best_on_line(z, golden=False), z) for z in zs]
+        t_best, z_best = min(starts, key=lambda tz: value(*tz)[0])
+        # Nelder-Mead polish in (t0, ln z0), bounded by the windows.
+        cell = max((t_hi - t_lo) / max(2, int(math.ceil((t_hi - t_lo) / 1.0))), 0.25)
+        simplex = [[t_best, math.log(z_best)], [t_best + cell, math.log(z_best)], [t_best, math.log(z_best) + 0.08]]
+
+        def fv(x):
+            return value(min(max(x[0], t_lo), t_hi), math.exp(min(max(x[1], math.log(zl)), math.log(zh))))[0]
+
+        vals = [fv(x) for x in simplex]
+        for _ in range(60):
+            order = sorted(range(3), key=lambda i: vals[i])
+            simplex, vals = [simplex[i] for i in order], [vals[i] for i in order]
+            if abs(vals[2] - vals[0]) < 1e-4 and max(abs(simplex[2][0] - simplex[0][0]), 0) < 0.01:
+                break
+            cen = [(simplex[0][j] + simplex[1][j]) / 2.0 for j in range(2)]
+            xr = [2 * cen[j] - simplex[2][j] for j in range(2)]
+            fr = fv(xr)
+            if fr < vals[0]:
+                xe = [3 * cen[j] - 2 * simplex[2][j] for j in range(2)]
+                fe = fv(xe)
+                simplex[2], vals[2] = (xe, fe) if fe < fr else (xr, fr)
+            elif fr < vals[1]:
+                simplex[2], vals[2] = xr, fr
+            else:
+                xc = [0.5 * (cen[j] + simplex[2][j]) for j in range(2)]
+                fc = fv(xc)
+                if fc < vals[2]:
+                    simplex[2], vals[2] = xc, fc
+                else:
+                    for i in (1, 2):
+                        simplex[i] = [0.5 * (simplex[i][j] + simplex[0][j]) for j in range(2)]
+                        vals[i] = fv(simplex[i])
+        i0 = min(range(3), key=lambda i: vals[i])
+        if vals[i0] < value(t_best, z_best)[0]:
+            t_best = min(max(simplex[i0][0], t_lo), t_hi)
+            z_best = math.exp(min(max(simplex[i0][1], math.log(zl)), math.log(zh)))
+    val, info = value(t_best, z_best)
+    if info is None:
+        raise ValueError(f"no realizable phase network between {t_lo:.1f} and {t_hi:.1f} degrees")
+    rows, c_pf, res = info
+    return {"elec_deg": t_best, "z0": z_best, "value": val, "score": res["score"], "rows": rows,
+            "series_c_pf": c_pf, "null": null}
+
+
+def line_gargs(gargs, elec_deg, z0):
+    """gargs with the phase network of elec_deg degrees (at the design frequency) and impedance z0."""
+    lam = C_LIGHT / (gargs.freq * 1e6)
+    if gargs.network == "lc":
+        return _variant(gargs, line_deg=elec_deg, coax_length=None, lc_z0=z0)
+    kw = dict(coax_length=line_phys_length(elec_deg, lam, gargs.coax_vf), line_deg=None, coax_z0=z0)
+    if getattr(gargs, "line_type", "openwire") == "openwire":
+        kw["line_spacing"] = openwire_spacing_mm(z0, gargs.line_wire_diameter)
+    return _variant(gargs, **kw)
+
+
+def geometry_worker(job):
+    """Evaluate one geometry with the inner phase-network solver: two probe runs over the scored frequencies, the
+    network that maximizes the score (inner_solve) and the rows of the antenna with that network from the superposed
+    probe fields (predicted_rows; exact for the linear model, so no further simulation is needed). The result has the
+    layout of simulate_model plus 'inner': elec_deg, z0, series_c_pf and the exact-null lines."""
+    td = Path(job["td"])
+    gargs = job["gargs"]
+    sub = td / job["name"]
+    sub.mkdir(parents=True, exist_ok=True)
+    try:
+        resps = two_port_response(job["exe"], gargs, sub, job["freqs"])
+    except (ValueError, OSError) as exc:
+        return {"ok": False, "stage": "probe", "reason": str(exc)}
+    finally:
+        shutil.rmtree(sub, ignore_errors=True)      # the responses are parsed; the probe decks are not kept
+    try:
+        sol = inner_solve(resps, gargs, job["spec"], job["design_i"], job["t_lo"], job["t_hi"], job.get("z0_bounds"),
+                          job.get("robust"))
+        rows = predicted_rows(resps, gargs, sol["elec_deg"], sol["z0"], job["rear_start"], job["rear_end"])
+    except (ValueError, ZeroDivisionError) as exc:
+        return {"ok": False, "stage": "inner", "reason": str(exc)}
+    if rows is None:
+        return {"ok": False, "stage": "inner", "reason": "the superposed pattern could not be formed"}
+    try:
+        info = build_deck(line_gargs(gargs, sol["elec_deg"], sol["z0"]))[5]
+        model_warnings = info.get("wire_warnings", []) + info.get("line_warnings", [])
+    except ValueError as exc:
+        return {"ok": False, "stage": "generator", "reason": str(exc)}
+    return {"ok": True, "per_freq": rows, "warnings": [], "model_warnings": model_warnings, "deck_path": None,
+            "out_path": None, "inner": {"elec_deg": sol["elec_deg"], "z0": sol["z0"], "series_c_pf": sol["series_c_pf"],
+                                        "null": sol["null"]}}
+
+
+def tradeoff_table(resps, gargs, spec, design_i, t_lo, t_hi, z0, n_points):
+    """Gain / F/B trade-off of one geometry from its probe responses: for n_points F/B floors spread between the F/B of
+    the highest-gain line and the highest F/B, the line in [t_lo, t_hi] of highest worst-band gain whose worst-band F/B
+    (spec['fb_key']) reaches the floor. Returns [(floor dB, elec_deg, worst gain dBi, worst F/B dB, Zin at the design
+    frequency)]."""
+    pts = []
+    n = max(20, int(math.ceil((t_hi - t_lo) / 0.25)))
+    for i in range(n + 1):
+        t = t_lo + (t_hi - t_lo) * i / n
+        got = inner_rows(resps, gargs, t, z0, spec)
+        if got is None:
+            continue
+        rows = got[0]
+        pts.append((t, min(r["forward_gain"] for r in rows), min(r[spec["fb_key"]] for r in rows),
+                    rows[design_i]["zin"]))
+    if not pts:
+        return []
+    fb_lo = max(pts, key=lambda p: p[1])[2]
+    fb_hi = max(p[2] for p in pts)
+    out = []
+    for k in range(max(2, n_points)):
+        floor = fb_lo + (fb_hi - fb_lo) * k / (max(2, n_points) - 1)
+        ok = [p for p in pts if p[2] >= floor - 1e-9]
+        if ok:
+            b = max(ok, key=lambda p: p[1])
+            out.append((floor, b[0], b[1], b[2], b[3]))
+    return out
+
+
+def jacobi_eigen(a):
+    """Eigenvalues and eigenvectors (columns) of the symmetric matrix a (list of lists) by cyclic Jacobi rotations."""
+    n = len(a)
+    a = [row[:] for row in a]
+    v = [[1.0 if i == j else 0.0 for j in range(n)] for i in range(n)]
+    for _ in range(60):
+        off = sum(a[i][j] ** 2 for i in range(n) for j in range(n) if i != j)
+        if off < 1e-22:
+            break
+        for p_ in range(n - 1):
+            for q in range(p_ + 1, n):
+                if abs(a[p_][q]) < 1e-300:
+                    continue
+                theta = (a[q][q] - a[p_][p_]) / (2.0 * a[p_][q])
+                t = (1.0 if theta >= 0 else -1.0) / (abs(theta) + math.sqrt(theta * theta + 1.0))
+                c = 1.0 / math.sqrt(t * t + 1.0)
+                s = t * c
+                for k in range(n):
+                    akp, akq = a[k][p_], a[k][q]
+                    a[k][p_], a[k][q] = c * akp - s * akq, s * akp + c * akq
+                for k in range(n):
+                    apk, aqk = a[p_][k], a[q][k]
+                    a[p_][k], a[q][k] = c * apk - s * aqk, s * apk + c * aqk
+                for k in range(n):
+                    vkp, vkq = v[k][p_], v[k][q]
+                    v[k][p_], v[k][q] = c * vkp - s * vkq, s * vkp + c * vkq
+    return [a[i][i] for i in range(n)], v
+
+
+def cma_es(f_batch, x0, sigma0, budget, seed=1, tol=1e-3):
+    """(mu/mu_w, lambda)-CMA-ES on the unit box [0, 1]^n (points outside are projected onto it by f_batch's caller).
+    f_batch(list of points) -> list of values (smaller = better), evaluated together (parallel). Stops at budget
+    evaluations or when sigma times the largest axis falls below tol. Returns (best x, best value, evaluations, stop
+    reason)."""
+    n = len(x0)
+    rng = random.Random(seed)
+    lam = 4 + int(3 * math.log(n))
+    mu = lam // 2
+    w = [math.log(mu + 0.5) - math.log(i + 1) for i in range(mu)]
+    sw = sum(w)
+    w = [x / sw for x in w]
+    mueff = 1.0 / sum(x * x for x in w)
+    cc = (4 + mueff / n) / (n + 4 + 2 * mueff / n)
+    cs = (mueff + 2) / (n + mueff + 5)
+    c1 = 2 / ((n + 1.3) ** 2 + mueff)
+    cmu = min(1 - c1, 2 * (mueff - 2 + 1 / mueff) / ((n + 2) ** 2 + mueff))
+    damps = 1 + 2 * max(0.0, math.sqrt((mueff - 1) / (n + 1)) - 1) + cs
+    chin = math.sqrt(n) * (1 - 1 / (4 * n) + 1 / (21 * n * n))
+    mean, sigma = list(x0), sigma0
+    pc, ps = [0.0] * n, [0.0] * n
+    cmat = [[1.0 if i == j else 0.0 for j in range(n)] for i in range(n)]
+    bmat, dvec = [[1.0 if i == j else 0.0 for j in range(n)] for i in range(n)], [1.0] * n
+    best_x, best_f, used, reason, gen = list(x0), math.inf, 0, "budget", 0
+    while used + lam <= budget:
+        gen += 1
+        zs = [[rng.gauss(0.0, 1.0) for _ in range(n)] for _ in range(lam)]
+        ys = [[sum(bmat[i][k] * dvec[k] * z[k] for k in range(n)) for i in range(n)] for z in zs]
+        xs = [[mean[i] + sigma * y[i] for i in range(n)] for y in ys]
+        fs = f_batch(xs)
+        used += lam
+        order = sorted(range(lam), key=lambda i: fs[i])
+        if fs[order[0]] < best_f:
+            best_f, best_x = fs[order[0]], xs[order[0]]
+        old = mean
+        ysel = [ys[i] for i in order[:mu]]
+        yw = [sum(w[k] * ysel[k][i] for k in range(mu)) for i in range(n)]
+        mean = [old[i] + sigma * yw[i] for i in range(n)]
+        # C^(-1/2) yw = B D^-1 B^T yw
+        bt_yw = [sum(bmat[k][i] * yw[k] for k in range(n)) for i in range(n)]
+        cinv = [sum(bmat[i][k] * bt_yw[k] / dvec[k] for k in range(n)) for i in range(n)]
+        ps = [(1 - cs) * ps[i] + math.sqrt(cs * (2 - cs) * mueff) * cinv[i] for i in range(n)]
+        nps = math.sqrt(sum(x * x for x in ps))
+        hsig = nps / math.sqrt(1 - (1 - cs) ** (2 * gen)) / chin < 1.4 + 2 / (n + 1)
+        pc = [(1 - cc) * pc[i] + (math.sqrt(cc * (2 - cc) * mueff) * yw[i] if hsig else 0.0) for i in range(n)]
+        for i in range(n):
+            for j in range(n):
+                rank_mu = sum(w[k] * ysel[k][i] * ysel[k][j] for k in range(mu))
+                cmat[i][j] = ((1 - c1 - cmu) * cmat[i][j] + c1 * (pc[i] * pc[j]
+                              + (0.0 if hsig else cc * (2 - cc) * cmat[i][j])) + cmu * rank_mu)
+        sigma *= math.exp((cs / damps) * (nps / chin - 1))
+        ev, bmat = jacobi_eigen(cmat)
+        dvec = [math.sqrt(max(e, 1e-20)) for e in ev]
+        if sigma * max(dvec) < tol:
+            reason = "step tolerance"
+            break
+    return best_x, best_f, used, reason
+
+
+def nm_minimize(f, x0, steps, lo, hi, budget):
+    """Bounded Nelder-Mead minimum of f from x0 with initial steps (points are clipped to [lo, hi]); at most budget
+    evaluations. Returns (x, f(x))."""
+    n = len(x0)
+
+    def clip(x):
+        return [min(max(v, a), b) for v, a, b in zip(x, lo, hi)]
+
+    used = [0]
+
+    def fv(x):
+        used[0] += 1
+        return f(clip(x))
+
+    simplex = [clip(x0)] + [clip([v + (steps[j] if j == i else 0.0) for j, v in enumerate(x0)]) for i in range(n)]
+    vals = [fv(x) for x in simplex]
+    while used[0] < budget:
+        order = sorted(range(n + 1), key=lambda i: vals[i])
+        simplex, vals = [simplex[i] for i in order], [vals[i] for i in order]
+        if abs(vals[-1] - vals[0]) < 1e-4 and max(max(abs(a - b) for a, b in zip(x, simplex[0]))
+                                                for x in simplex[1:]) < 1e-4:
+            break
+        cen = [sum(x[j] for x in simplex[:-1]) / n for j in range(n)]
+        xr = clip([2 * c - w for c, w in zip(cen, simplex[-1])])
+        fr = fv(xr)
+        if fr < vals[0]:
+            xe = clip([3 * c - 2 * w for c, w in zip(cen, simplex[-1])])
+            fe = fv(xe)
+            simplex[-1], vals[-1] = (xe, fe) if fe < fr else (xr, fr)
+        elif fr < vals[-2]:
+            simplex[-1], vals[-1] = xr, fr
+        else:
+            xc = clip([0.5 * (c + w) for c, w in zip(cen, simplex[-1])])
+            fc = fv(xc)
+            if fc < vals[-1]:
+                simplex[-1], vals[-1] = xc, fc
+            else:
+                simplex[1:] = [clip([b + 0.5 * (v - b) for v, b in zip(x, simplex[0])]) for x in simplex[1:]]
+                vals[1:] = [fv(x) for x in simplex[1:]]
+    i = min(range(n + 1), key=lambda k: vals[k])
+    return simplex[i], vals[i]
+
+
+def latin_hypercube(n_points, n_dim, seed):
+    """n_points stratified random points in [0, 1]^n_dim (one per stratum and dimension)."""
+    rng = random.Random(seed)
+    cols = []
+    for _ in range(n_dim):
+        perm = list(range(n_points))
+        rng.shuffle(perm)
+        cols.append([(perm[i] + rng.random()) / n_points for i in range(n_points)])
+    return [[cols[d][i] for d in range(n_dim)] for i in range(n_points)]
+
+
+def select_basins(items, key_vec, k, radius):
+    """Up to k items, best first (items are already sorted best first), none closer than radius (Euclidean distance of
+    key_vec, a normalized parameter vector) to an item already chosen."""
+    chosen = []
+    for it in items:
+        v = key_vec(it)
+        if all(math.dist(v, key_vec(c)) >= radius for c in chosen):
+            chosen.append(it)
+            if len(chosen) >= k:
+                break
+    return chosen
 
 
 def scored_frequencies(p, args):
@@ -4769,16 +5777,22 @@ def run_optimize(p, args, network_given):
         args.realized_gain = False
     n_par = args.reflectors + args.directors
     if args.refine is None:
-        args.refine = 8 if n_par else (6 if single else 0)
-        if args.refine:
-            print(f"NOTE: --refine defaults to {args.refine} rounds"
-                  + (" (the individual lengths and spacings of the reflectors/directors are tuned by the local "
-                     "search)" if n_par else "") + "; use --refine 0 for the grid only.")
+        args.refine = DEFAULT_REFINE_ROUNDS
     elif n_par and args.refine == 0:
-        print("NOTE: --refine 0 with reflectors/directors: their individual lengths and spacings stay at the grid "
-              "values.")
-    if args.refine < 0 or args.nm_evals < 0:
-        p.error("--refine and --nm-evals must be >= 0")
+        print("NOTE: --refine 0 with reflectors/directors: their individual lengths and spacings are only moved by the "
+              "Nelder-Mead / CMA-ES stage.")
+    if args.refine < 0 or (args.nm_evals is not None and args.nm_evals < 0) or (
+            args.refine_evals is not None and args.refine_evals < 0):
+        p.error("--refine, --refine-evals and --nm-evals must be >= 0")
+    if args.starts < 1 or args.lhs < 0:
+        p.error("--starts must be >= 1 and --lhs >= 0")
+    if args.pretune is None:
+        args.pretune = single and not args.match_score
+    for name in ("fb_cap", "band_softness", "q_weight"):
+        if getattr(args, name) < 0 or not math.isfinite(getattr(args, name)):
+            p.error(f"--{name.replace('_', '-')} must be finite and >= 0")
+    if args.pareto < 0 or args.robust_inner < 0 or args.parasitic_inner < 0:
+        p.error("--pareto, --robust-inner and --parasitic-inner must be >= 0")
     try:
         par_offsets = parse_values(args.parasitic_length_offsets, "parasitic length offset", -0.3, 0.3) \
             if n_par else [0.0]
@@ -4834,6 +5848,7 @@ def run_optimize(p, args, network_given):
         p.error(str(exc))
     if args.tap_values and not tmatch:
         print("WARNING: --tap-values only applies with --feed-style tmatch; ignored.", file=sys.stderr)
+    tap_sym = args.tap_symmetric or not tmatch
     match_q = (args.match_q_l, args.match_q_c)
     auto_c = args.series_c_pf == "auto"
     if args.tolerance_mc < 0 or args.tol_top_k < 1:
@@ -4861,6 +5876,26 @@ def run_optimize(p, args, network_given):
         front_lengths = parse_values(args.front_length_values, "front length", 0.5, 1.5)
     except argparse.ArgumentTypeError as exc:
         p.error(str(exc))
+    inner = single and abs_coax is None and args.inner_line
+    z0_bounds = None
+    if args.line_z0_range:
+        try:
+            z0_bounds = tuple(parse_values(args.line_z0_range, "--line-z0-range", 10.0, 2000.0))
+        except argparse.ArgumentTypeError as exc:
+            p.error(str(exc))
+        if len(z0_bounds) != 2 or not z0_bounds[0] < z0_bounds[1]:
+            p.error("--line-z0-range needs MIN,MAX with MIN < MAX")
+        if not (inner and args.network == "tl" and args.line_type == "openwire"):
+            p.error("--line-z0-range needs --network tl --line-type openwire with the inner line solver (no "
+                    "--no-inner-line, no --line-length-values)")
+        if z0_list is not None:
+            p.error("--line-z0-range and --z0-values exclude each other")
+        z_floor = openwire_z0(1.0, OPENWIRE_MIN_RATIO)
+        if z0_bounds[0] < z_floor:
+            p.error(f"--line-z0-range: an open-wire line needs Z0 >= {z_floor:.0f} ohm (D/d >= {OPENWIRE_MIN_RATIO:g})")
+    if args.robust_inner and not inner:
+        p.error("--robust-inner needs the inner line solver (--network tl/lc, no --no-inner-line, no "
+                "--line-length-values)")
     if args.network == "tl":
         if z0_list is not None and args.line_type == "openwire":
             if args.line_spacing_given:
@@ -4905,29 +5940,44 @@ def run_optimize(p, args, network_given):
     allow_m = args.line_allowance_mm / 1000.0
     fb_key = FB_METRIC_KEYS[args.fb_metric]
 
-    def min_line(spacing):
-        """Shortest buildable TL line (degrees) for a spacing in wavelengths; 0 for the LC network."""
+    def feed_dist(spacing, bars=None):
+        """Straight distance (m) between the points the phase network connects, for a spacing in wavelengths and
+        the (rear, front) T-bar offsets in mm (None: the --tap-offset-mm of both)."""
+        if bars is None:
+            return feed_distance_m(args, spacing * lam)
+        return feed_distance_m(_variant(args, tap_offset_mm_rear=bars[0], tap_offset_mm_front=bars[1]), spacing * lam)
+
+    def min_line(spacing, bars=None):
+        """Shortest buildable TL line (degrees) for a spacing in wavelengths and T-bar offsets; 0 for the LC
+        network."""
         if args.network != "tl":
             return 0.0
-        return line_min_elec_deg(feed_distance_m(args, spacing * lam), lam, args.coax_vf, allow_m)
+        return line_min_elec_deg(feed_dist(spacing, bars), lam, args.coax_vf, allow_m)
 
-    def line_too_short(spacing, elec):
+    def line_too_short(spacing, elec, bars=None):
         """True when a TL line of elec degrees cannot span the feed points (spacing in wavelengths)."""
-        return args.network == "tl" and elec + 1e-9 < min_line(spacing)
+        return args.network == "tl" and elec + 1e-9 < min_line(spacing, bars)
 
-    def max_line(spacing):
+    def max_line(spacing, bars=None):
         """Longest line (degrees) scanned for a spacing: --max-line-deg or the automatic limit; 179.99 for LC."""
         if args.network != "tl":
             return 179.99
         return auto_max_line_deg(args, line_electrical_deg(theory_line_lag(args.feed_element, spacing), args.crossed),
-                                 min_line(spacing), line_offsets)
+                                 min_line(spacing, bars), line_offsets)
 
-    def line_valid(spacing, elec):
+    def line_valid(spacing, elec, bars=None):
         """A realizable line/network of elec degrees: LC 0..180 (low-pass pi); TL longer than zero and than the
         distance between the feed points, never beyond --max-line-deg (values are never taken modulo 360)."""
         if args.network == "lc":
             return 0.0 < elec < 180.0
-        return TL_MIN_ELEC_DEG <= elec <= max_line(spacing) + 1e-9 and not line_too_short(spacing, elec)
+        return (TL_MIN_ELEC_DEG <= elec <= max_line(spacing, bars) + 1e-9
+                and not line_too_short(spacing, elec, bars))
+
+    def bars_of(c):
+        """(rear, front) T-bar offsets in mm of a candidate (None without T-match)."""
+        if not tmatch:
+            return None
+        return (c.get("bar_r") or args.tap_offset_mm, c.get("bar_f") or args.tap_offset_mm)
 
     def clamp_par(c):
         """Candidate with every parasitic length/spacing forced into its pre-calculated limits."""
@@ -4977,7 +6027,7 @@ def run_optimize(p, args, network_given):
                     tap_offset_mm=args.tap_offset_mm, tap_wire_mm=args.tap_wire_mm, series_c_pf=args.series_c_pf,
                     series_c_q=args.series_c_q, boom_clearance_mm=args.boom_clearance_mm,
                     ideal_drive=args.ideal_drive, extended_kernel=args.extended_kernel, kernel=args.kernel,
-                    nec2c=args.nec2c)
+                    nec2c=args.nec2c, cone_half_deg=rear_cone_half_angle(rear_start, rear_end))
 
     def gargs_from(c):
         z0c = c["z0"]
@@ -4988,7 +6038,10 @@ def run_optimize(p, args, network_given):
                  front_length_factor=c["front"], rear_phase=c["phase"], coax_length=c["coax"],
                  coax_z0=z0c if z0c is not None else args.coax_z0, line_spacing=spmm,
                  line_deg=c["line_elec"] if (c["coax"] is None and args.network == "lc") else None,
-                 element_diameter=c["diam"], tap_mm=c.get("tap") or args.tap_mm,
+                 element_diameter=c["diam"], tap_mm=c.get("tap_r") or args.tap_mm,
+                 tap_mm_rear=c.get("tap_r") or args.tap_mm, tap_mm_front=c.get("tap_f") or args.tap_mm,
+                 tap_offset_mm_rear=c.get("bar_r") or args.tap_offset_mm,
+                 tap_offset_mm_front=c.get("bar_f") or args.tap_offset_mm,
                  reflector_lengths=tuple(c["ref_len"]) or None, reflector_spacings=tuple(c["ref_sp"]) or None,
                  director_lengths=tuple(c["dir_len"]) or None, director_spacings=tuple(c["dir_sp"]) or None)
         return Namespace(**d)
@@ -5007,7 +6060,8 @@ def run_optimize(p, args, network_given):
                 "front": front if front is not None else sorted(front_lengths)[len(front_lengths) // 2],
                 "spacing": spacing, "ratio": 1.0,
                 "phase": None, "line_off": None, "line_elec": None, "coax": None, "z0": z0,
-                "diam": args.element_diameter, "tap": tap,
+                "diam": args.element_diameter, "tap_r": tap, "tap_f": tap,
+                "bar_r": args.tap_offset_mm, "bar_f": args.tap_offset_mm,
                 "ref_len": tuple(e["len_factor"] for e in ref_base), "ref_sp": tuple(e["spacing_lambda"] for e in ref_base),
                 "dir_len": tuple(e["len_factor"] for e in dir_base), "dir_sp": tuple(e["spacing_lambda"] for e in dir_base)}
 
@@ -5019,7 +6073,7 @@ def run_optimize(p, args, network_given):
     def compute_line_bases(front=None, quiet=False):
         line_bases.clear()
         line_syn.clear()
-        if not (single and abs_coax is None):
+        if not (single and abs_coax is None) or inner:
             return
         for sp in spacings:
             for z0 in z0s:
@@ -5050,18 +6104,29 @@ def run_optimize(p, args, network_given):
 
     def line_options(spacing, z0=None, tap=None):
         """Tuples (offset, electrical degrees, physical length) for a spacing, a line Z0 and a tap."""
-        if not single:
+        if not single or inner:
             return [(None, None, None)]
         z0 = z0 if z0 is not None else z0s[0]
         tap = tap if tap is not None else tap_list[0]
         if abs_coax is not None:
             cand = [(None, 360.0 * (L / args.coax_vf) / lam, L) for L in abs_coax if L > TL_MIN_LENGTH_M]
+            out = [c for c in cand if line_valid(spacing, c[1])]
         else:
+            # Offsets around the scan centre, clamped into the realizable window (duplicates removed), so every
+            # scanned value is a buildable line.
             base = line_bases[(spacing, z0, tap)]
-            cand = [(off, base + off, line_phys_length(base + off, lam, args.coax_vf) if args.network == "tl" else None)
-                    for off in line_offsets]
-        out = [c for c in cand if line_valid(spacing, c[1])]
-        line_dropped[(spacing, z0, tap)] = (len(cand) - len(out), len(cand))
+            lo_w = max(min_line(spacing), TL_MIN_ELEC_DEG) if args.network == "tl" else 0.5
+            hi_w = max_line(spacing) if args.network == "tl" else 179.5
+            cand, seen = [], set()
+            for off in line_offsets:
+                elec = round(min(max(base + off, lo_w), hi_w), 4)
+                if elec in seen:
+                    continue
+                seen.add(elec)
+                cand.append((elec - base, elec, line_phys_length(elec, lam, args.coax_vf) if args.network == "tl"
+                             else None))
+            out = [c for c in cand if line_valid(spacing, c[1])]
+        line_dropped[(spacing, z0, tap)] = (len(line_offsets) - len(out), len(line_offsets))
         return out
 
     def line_phys(elec):
@@ -5076,15 +6141,15 @@ def run_optimize(p, args, network_given):
                                                     key=lambda kv: (kv[0][0], kv[0][1] or 0.0, kv[0][2] or 0.0)):
         if dropped:
             print(f"NOTE: spacing {sp:g} lambda" + (f", tap {tap:g} mm" if tap is not None else "")
-                  + f": {dropped} of {total_l} line values dropped (shorter than the "
-                  f"distance between the feed points, {min_line(sp):.1f} deg at VF {args.coax_vf:g}"
-                  + (f" with {args.line_allowance_mm:g} mm of connections" if allow_m else "")
-                  + f", or longer than {max_line(sp):.0f} deg)")
+                  + f": {dropped} of {total_l} line values merged or dropped at the limits of the realizable window "
+                  f"(not shorter than the distance between the feed points, {min_line(sp):.1f} deg at VF "
+                  f"{args.coax_vf:g}" + (f" with {args.line_allowance_mm:g} mm of connections" if allow_m else "")
+                  + f", not longer than {max_line(sp):.0f} deg)")
 
     total = sum(len(ratios) * len(rear_lengths) * len(front_lengths) * len(phase_options(sp))
                 * sum(len(line_options(sp, z0, tap)) for z0 in z0s for tap in tap_list) * len(par_offsets)
                 * len(par_scales) for sp in spacings)
-    runs_per = 2 if args.ground != "free" else 1
+    runs_per = (2 if args.ground != "free" else 1) + (2 if inner else 0)
     print(f"Scan: {total} candidates; objective={args.objective}; mount={args.mount}; "
           f"network={args.network}{'' if network_given else ' (default value)'}; "
           f"{n_jobs} parallel job(s); nec2c: {nec_ver}")
@@ -5097,8 +6162,14 @@ def run_optimize(p, args, network_given):
             print(txt)
     if single:
         print(f"{'Crossed' if args.crossed else 'Straight'} line fed at the {args.feed_element} element"
-              + (f" through T-matches (taps {', '.join(f'{t:g}' for t in tap_list)} mm)" if tmatch else "")
-              + "; scan around the " + ("synthesized" if line_syn else "theoretical") + " line of each spacing.")
+              + (f" through T-matches (taps {', '.join(f'{t:g}' for t in tap_list)} mm"
+                 + (", the same on both elements)" if tap_sym else ", rear and front moved separately)") if tmatch else "")
+              + ("; inner solver: the phase line" + (f" and its Z0 ({z0_bounds[0]:g}..{z0_bounds[1]:g} ohm)"
+                                                    if z0_bounds else "")
+                 + " of every geometry is chosen exactly from two probe runs over the scored frequencies"
+                 + (f", by the 10th percentile score over {args.robust_inner} line tolerance draws"
+                    if args.robust_inner else "") + "." if inner else
+                 "; scan around the " + ("synthesized" if line_syn else "theoretical") + " line of each spacing."))
         if args.match_score:
             print(f"Score through an ideal L-network designed at {args.freq:g} MHz against {args.target_impedance:g} "
                   f"ohm (Q_L {args.match_q_l:g}, Q_C {args.match_q_c:g}): matched VSWR over the band, gain after the "
@@ -5106,7 +6177,9 @@ def run_optimize(p, args, network_given):
                                                   "per dB of that loss (efficiency penalty; the F/B itself is "
                                                   "unchanged)" if args.objective == "front-back" else "") + ".")
     if args.band_freqs:
-        print(f"Band: {len(freqs)} points {freqs[0]:g}..{freqs[-1]:g} MHz; score = worst case over the band"
+        print(f"Band: {len(freqs)} points {freqs[0]:g}..{freqs[-1]:g} MHz; score = "
+              + (f"smooth minimum (softness {args.band_softness:g} dB) over the band" if args.band_softness else
+                 "worst case over the band")
               + (f" minus {args.vswr_weight:g} dB per unit of (max VSWR - 1)" if single and args.vswr_weight else "")
               + ("; the LC network gets its NT admittances per frequency" if args.network == "lc" else ""))
     if args.ground != "free":
@@ -5123,91 +6196,24 @@ def run_optimize(p, args, network_given):
         return parasitic_layout(ga, args.freq, -sp_m / 2, sp_m / 2, element_sections(ga, "rear")[0][1],
                                 element_sections(ga, "front")[0][1])
 
-    def apply_match(per_freq, net=None):
-        """--match-score: design the L-network at the design frequency (both roots tried, the lower worst VSWR over
-        the band kept), build it with components of Q --match-q-l/--match-q-c and store in every per-frequency row
-        the matched VSWR (m_vswr), the network dissipation plus residual mismatch (m_loss, dB) and the gain after
-        them (m_gain). A given net (the nominal design's network, in the Monte-Carlo) is used as built instead.
-        Returns the network, or None when Zin cannot be matched (R <= 0)."""
-        z_d = per_freq[design_i]["zin"]
-        if net is None and z_d is not None and z_d.real > 0:
-            w0 = 2 * math.pi * args.freq * 1e6
-            table = [(x["freq_mhz"], x["zin"]) for x in per_freq]
-            try:
-                net = lnet_with_q(lnet_select(z_d, args.target_impedance, w0, "best", table)[0], *match_q)
-            except ValueError:
-                net = None
-        for x in per_freq:
-            if net is None or x["zin"] is None or x["zin"].real <= 0:
-                x.update(m_vswr=math.inf, m_loss=math.inf, m_gain=-math.inf)
-                continue
-            w = 2 * math.pi * x["freq_mhz"] * 1e6
-            zi = lnet_zin(x["zin"], w, net)
-            tot = lnet_losses(x["zin"], w, net, args.target_impedance)[2]
-            x.update(m_vswr=lnet_metrics(zi, args.target_impedance)[0], m_loss=tot, m_gain=x["forward_gain"] - tot)
-        per_freq[design_i]["m_net"] = net
-        return net
+    score_spec = {"single": single, "match_score": bool(args.match_score), "objective": args.objective,
+                  "fb_key": fb_key, "fb_cap": args.fb_cap, "softness": args.band_softness, "w_gain": args.w_gain,
+                  "w_fb": args.w_fb, "loss_weight": args.loss_weight, "vswr_weight": args.vswr_weight,
+                  "realized_gain": bool(args.realized_gain), "target": args.target_impedance, "freq": args.freq,
+                  "match_q": match_q, "r_min": r_min, "r_max": r_max, "x_max": args.zin_x_max,
+                  "min_fb": args.min_fb, "min_gain": args.min_gain, "q_weight": args.q_weight,
+                  "rear_sector": (rear_start, rear_end)}
 
     def score_candidate(per_freq, net=None):
-        """Worst case over the band of the objective term, minus the VSWR penalty at the worst VSWR.
-        With --match-score the VSWR is the one after the matching network (net: a fixed network, see apply_match)
-        and the gain is the gain after its loss; the front-back objective keeps its pure F/B and pays
-        --loss-weight dB of score per dB of network loss (an efficiency penalty: the loss does not change the F/B).
-        Returns (score, index of the worst frequency, Zin-constraint violation text, max VSWR)."""
-        terms, vswrs, violation = [], [], ""
-        if single and args.match_score:
-            apply_match(per_freq, net)
-        for pf in per_freq:
-            if single and args.match_score:
-                g_used, loss = pf["m_gain"], pf["m_loss"]
-            else:
-                g_used = pf["realized"] if (args.realized_gain and pf["realized"] is not None) else pf["forward_gain"]
-                loss = 0.0
-            rfb = pf[fb_key]
-            terms.append(rfb - args.loss_weight * loss if args.objective == "front-back"
-                         else g_used if args.objective == "gain" else args.w_gain * g_used + args.w_fb * rfb)
-            if single:
-                vswrs.append(pf["m_vswr"] if args.match_score else pf["vswr"])
-                z = pf["zin"]
-                if not violation:
-                    if not r_min <= z.real <= r_max:
-                        violation = f"R_in={z.real:.1f} outside {r_min:g}..{r_max:g} at {pf['freq_mhz']:.3f} MHz"
-                    elif abs(z.imag) > args.zin_x_max:
-                        violation = f"|X_in|={abs(z.imag):.1f} > {args.zin_x_max:g} at {pf['freq_mhz']:.3f} MHz"
-        terms = [t if math.isfinite(t) else -1e9 for t in terms]
-        worst = min(range(len(terms)), key=lambda i: terms[i])
-        score, vmax = terms[worst], None
-        if single:
-            vmax = max(vswrs)
-            score = score - args.vswr_weight * (vmax - 1) if math.isfinite(vmax) else -1e9
-        return score, worst, violation, vmax
-
-    def penalty_of(vmax):
-        """VSWR penalty subtracted from the objective term (dB); 0 without a single feed point."""
-        if vmax is None or not math.isfinite(vmax):
-            return 0.0
-        return args.vswr_weight * (vmax - 1)
+        """optimizer_score of a candidate's rows: (score, index of the worst frequency, Zin-constraint violation
+        text, max VSWR); the full result dict is stored in the design-frequency row as 'score_parts'."""
+        res = optimizer_score(per_freq, score_spec, design_i, net)
+        per_freq[design_i]["score_parts"] = res
+        return res["score"], res["worst"], res["violation"], res["vmax"]
 
     def zin_violation(per_freq):
         """Total ohms by which Zin leaves the admissible window (R range, |X| limit) over the band; 0 = feasible."""
-        if not single:
-            return 0.0
-        v = 0.0
-        for pf_ in per_freq:
-            z = pf_["zin"]
-            v += max(0.0, r_min - z.real) + max(0.0, z.real - r_max) + max(0.0, abs(z.imag) - args.zin_x_max)
-        return v
-
-    def rank_of(score, viol):
-        """Sort key (smaller = better): feasible by score, infeasible by violation then score."""
-        return (0, -score, 0.0) if viol <= 0 else (1, viol, -score)
-
-    def rank_better(a, b):
-        if a[0] != b[0]:
-            return a[0] < b[0]
-        if a[1] < b[1] - 1e-9:
-            return True
-        return abs(a[1] - b[1]) <= 1e-9 and a[2] < b[2] - 1e-9
+        return zin_window_violation(per_freq, score_spec)[0]
 
     evals = []
     st = {"idx": 0, "total": 0, "warn_runs": 0, "warn_total": 0, "best": None}
@@ -5216,20 +6222,56 @@ def run_optimize(p, args, network_given):
     with tempfile.TemporaryDirectory(prefix="hb9cv_opt_") as td_name, make_pool(n_jobs) as pool:
         td = Path(td_name)
 
+        robust_spec = None
+        if args.robust_inner:
+            robust_spec = {"draws": robust_draws(args.robust_inner, args.tol_seed + 7), "line_deg": args.tol_line_deg,
+                           "vf_pct": args.tol_vf_pct if args.network == "tl" else 0.0, "z0_pct": args.tol_z0_pct,
+                           "c_pct": args.tol_c_pct if args.series_c_pf is not None else 0.0,
+                           "net_fixed": not args.tol_retune}
+
+        def line_window(spacing, bars=None):
+            """(shortest, longest) electrical length of the phase network for a spacing in wavelengths and T-bar
+            offsets."""
+            if args.network == "tl":
+                return max(min_line(spacing, bars), TL_MIN_ELEC_DEG), max_line(spacing, bars)
+            return 0.5, 179.5
+
         def job_for(name, c, fr, pt_mode=-1, gargs=None):
+            """Job of one candidate: the inner phase-network solver plus one simulation for a geometry (inner mode),
+            otherwise one simulation of the model as given (always for an explicit gargs, e.g. a Monte-Carlo
+            sample)."""
+            if inner and gargs is None:
+                t_lo, t_hi = line_window(c["spacing"], bars_of(c))
+                return dict(kind="geometry", exe=exe, td=str(td), name=name, gargs=gargs_from(c), freqs=fr,
+                            rear_start=rear_start, rear_end=rear_end, pt_mode=pt_mode, spec=score_spec,
+                            design_i=design_i, t_lo=t_lo, t_hi=t_hi, z0_bounds=z0_bounds, robust=robust_spec)
             return dict(exe=exe, td=str(td), name=name, gargs=gargs if gargs is not None else gargs_from(c), freqs=fr,
                         rear_start=rear_start, rear_end=rear_end, pt_mode=pt_mode)
 
         def cand_key(c):
-            """Canonical key of a candidate: two candidates with the same key build the same deck."""
+            """Canonical key of a candidate: two candidates with the same key build the same deck (with the inner
+            solver the phase network is part of the result, not of the key)."""
             def r(v):
                 return None if v is None else round(float(v), 6)
-            return (r(c["rear"]), r(c["front"]), r(c["spacing"]), r(c["ratio"]), r(c["phase"]), r(c["line_elec"]),
-                    r(c["coax"]), r(c["z0"]), r(c["diam"]), r(c.get("tap")), tuple(map(r, c["ref_len"])),
-                    tuple(map(r, c["ref_sp"])), tuple(map(r, c["dir_len"])), tuple(map(r, c["dir_sp"])))
+            line = () if inner else (r(c["line_elec"]), r(c["coax"]))
+            z = None if (inner and z0_bounds) else r(c["z0"])
+            return (r(c["rear"]), r(c["front"]), r(c["spacing"]), r(c["ratio"]), r(c["phase"])) + line + (
+                z, r(c["diam"]), r(c.get("tap_r")), r(c.get("tap_f")), r(c.get("bar_r")), r(c.get("bar_f")),
+                tuple(map(r, c["ref_len"])),
+                tuple(map(r, c["ref_sp"])), tuple(map(r, c["dir_len"])), tuple(map(r, c["dir_sp"])))
 
         sim_cache = {}      # candidate key -> CSV row (None: the run failed); every geometry is simulated once
         viol_by_row = {}    # id(CSV row) -> unrounded Zin-window violation (ohm) used for the ranking
+        inner_by_key = {}   # candidate key -> phase network chosen by the inner solver
+
+        def apply_inner(c, info):
+            """Candidate c with the phase network the inner solver chose for its geometry."""
+            c["line_elec"] = round(info["elec_deg"], 6)
+            c["coax"] = line_phys(c["line_elec"])
+            c["line_off"] = None
+            if args.network == "tl":
+                c["z0"] = round(info["z0"], 4)
+            return c
 
         def absorb(idx, cand, res, stage):
             """Turn one simulation result into a CSV row; update the best candidate."""
@@ -5247,6 +6289,8 @@ def run_optimize(p, args, network_given):
             pf = res["per_freq"]
             d = pf[design_i]
             score, worst_i, violation, vmax = score_candidate(pf)
+            parts = d["score_parts"]
+            inf_ = res.get("inner") or {}
             z0, line_off, line_elec, coax_length = cand["z0"], cand["line_off"], cand["line_elec"], cand["coax"]
             sp_mm = (openwire_spacing_mm(z0, args.line_wire_diameter)
                      if z0 is not None and args.line_type == "openwire" else None)
@@ -5277,11 +6321,17 @@ def run_optimize(p, args, network_given):
                    "lc_c_pf": lc_c * 1e12 if lc_c is not None else "",
                    "line_electrical_deg": line_elec if single else "",
                    "line_theory_offset_deg": line_off if line_off is not None else "",
-                   "line_min_electrical_deg": min_line(cand["spacing"]) if args.network == "tl" else "",
-                   "line_slack_mm": ((coax_length - feed_distance_m(args, cand["spacing"] * lam)) * 1000.0
+                   "line_min_electrical_deg": min_line(cand["spacing"], bars_of(cand)) if args.network == "tl" else "",
+                   "line_max_electrical_deg": max_line(cand["spacing"], bars_of(cand)) if args.network == "tl" else "",
+                   "line_slack_mm": ((coax_length - feed_dist(cand["spacing"], bars_of(cand))) * 1000.0
                                      if (args.network == "tl" and coax_length) else ""),
+                   "inner_line": "yes" if inf_ else "",
+                   "null_line": "; ".join(f"{t:.1f} deg / {zz:.0f} ohm" for t, zz in inf_.get("null", [])),
                    "feed_style": args.feed_style if single else "",
-                   "tap_mm": cand.get("tap") if tmatch else "",
+                   "tap_rear_mm": cand.get("tap_r") if tmatch else "",
+                   "tap_front_mm": cand.get("tap_f") if tmatch else "",
+                   "bar_rear_mm": cand.get("bar_r") if tmatch else "",
+                   "bar_front_mm": cand.get("bar_f") if tmatch else "",
                    "series_c_pf": d.get("series_c_pf") or "",
                    "rear_length_factor": cand["rear"],
                    "front_length_factor": cand["front"],
@@ -5296,6 +6346,7 @@ def run_optimize(p, args, network_given):
                    "rear_gain_dB": d["rear_gain"], "front_to_back_dB": d["fb"],
                    "rear_sector_max_dB": d["worst_rear_gain"], "rear_sector_max_angle_deg": d["worst_rear_angle"],
                    "front_to_back_sector_dB": d["robust_fb"], "front_to_back_cone_dB": d["cone_fb"],
+                   "front_to_back_rear_avg_dB": d["rear_avg_fb"],
                    "Zin_real": zin.real if zin is not None else "",
                    "Zin_imag": zin.imag if zin is not None else "",
                    "Zin_real_port": d["zin_port"].real if d.get("zin_port") is not None else "",
@@ -5307,6 +6358,7 @@ def run_optimize(p, args, network_given):
                    "band_min_gain_dB": min(x["forward_gain"] for x in pf),
                    "band_min_fb_sector_dB": min(x["robust_fb"] for x in pf),
                    "band_min_fb_cone_dB": min(x["cone_fb"] for x in pf),
+                   "band_min_fb_rear_avg_dB": min(x["rear_avg_fb"] for x in pf),
                    "band_max_vswr": vmax if vmax is not None else "",
                    "zin_constraint": violation,
                    "match_network": (f"{lnet_topology_text(d['m_net'])}: series {lnet_describe(d['m_net']['series'])}, "
@@ -5319,8 +6371,9 @@ def run_optimize(p, args, network_given):
                    "nec_warnings": len(res["warnings"]),
                    "search": stage,
                    "fb_metric": args.fb_metric,
-                   "objective_term": score + penalty_of(vmax) if score > -1e8 else "",
-                   "vswr_penalty": penalty_of(vmax) if vmax is not None else "",
+                   "objective_term": parts["term"] if score > -1e8 else "",
+                   "vswr_penalty": parts["vswr_pen"] if vmax is not None else "",
+                   "other_penalty_dB": parts["other_pen"],
                    "score": score}
             lay = layout_for(cand)
             sp_c = cand["spacing"] * lam
@@ -5346,7 +6399,8 @@ def run_optimize(p, args, network_given):
 
         def eval_batch(cands, stage):
             """Simulate candidates (in parallel); rows come back in the order of cands. A candidate already
-            simulated (same key, see cand_key) is not run again: its earlier row is returned."""
+            simulated (same key, see cand_key) is not run again: its earlier row is returned. With the inner solver
+            every candidate dict receives the phase network chosen for its geometry."""
             keys = [cand_key(c) for c in cands]
             new, seen_now = [], set()
             for c, key in zip(cands, keys):
@@ -5361,22 +6415,32 @@ def run_optimize(p, args, network_given):
                 jobs.append(job_for(f"candidate_{st['idx']:04d}", c, freqs))
             for k, (idx, res) in enumerate(zip(meta, run_jobs(pool, jobs))):
                 c, key = new[k]
+                if res.get("ok") and res.get("inner"):
+                    inner_by_key[key] = res["inner"]
+                    apply_inner(c, res["inner"])
                 sim_cache[key] = absorb(idx, c, res, stage)
                 if idx % 10 == 0 or k == len(new) - 1:
                     print(f"[{idx}/{st['total']}] valid={len(evals)}; best score="
                           + (f"{st['best']['score']:.2f} dB" if st["best"] else "none"))
+            for c, key in zip(cands, keys):
+                if key in inner_by_key:
+                    apply_inner(c, inner_by_key[key])
             return [sim_cache[key] for key in keys]
+
+        def row_rank(row):
+            """Rank of a CSV row (None for a failed run)."""
+            return None if not row else rank_of(row["score"], viol_by_row[id(row)])
 
         def line_offset_of(c):
             """Offset of the candidate's line from the scan centre of its spacing (None off the grid spacings)."""
-            base = line_bases.get((c["spacing"], c["z0"], c.get("tap")))
+            base = line_bases.get((c["spacing"], c["z0"], c.get("tap_r")))
             return None if base is None or c["line_elec"] is None else c["line_elec"] - base
 
         def tap_valid(c):
-            """The T-match tap keeps 1.5 segments from the center and one segment from the tip of both elements."""
+            """Both T-match taps keep 1.5 segments from the center and one segment from the tip of both elements."""
             length = min(150.0 / args.freq * c["rear"], 139.0 / args.freq * c["front"])
             seg = length / args.segments
-            return 1.5 * seg <= c["tap"] / 1000.0 <= length / 2.0 - seg
+            return all(1.5 * seg <= c[k] / 1000.0 <= length / 2.0 - seg for k in ("tap_r", "tap_f"))
 
         def next_diameter(d, sign, step):
             """Neighbouring purchasable diameter (--diameter-values), or d +- step in --diameter-range; None at
@@ -5391,7 +6455,8 @@ def run_optimize(p, args, network_given):
         def center_candidate():
             """Middle point of the grid: median lengths and spacing, line offset closest to the scan centre."""
             sp = sorted(spacings)[len(spacings) // 2]
-            lopts = line_options(sp, z0s[0], tap_list[len(tap_list) // 2])
+            tap_c = tap_list[len(tap_list) // 2]
+            lopts = line_options(sp, z0s[0], tap_c)
             if single and not lopts:
                 return None
             lo = min(lopts, key=lambda t: abs(t[0]) if t[0] is not None else 0.0)
@@ -5400,7 +6465,8 @@ def run_optimize(p, args, network_given):
                               "front": sorted(front_lengths)[len(front_lengths) // 2], "spacing": sp,
                               "ratio": ratios[len(ratios) // 2], "phase": ph[len(ph) // 2], "line_off": lo[0],
                               "line_elec": lo[1], "coax": lo[2], "z0": z0s[0], "diam": args.element_diameter,
-                              "tap": tap_list[len(tap_list) // 2],
+                              "tap_r": tap_c, "tap_f": tap_c, "bar_r": args.tap_offset_mm,
+                              "bar_f": args.tap_offset_mm,
                               "ref_len": tuple(e["len_factor"] for e in ref_base),
                               "ref_sp": tuple(e["spacing_lambda"] for e in ref_base),
                               "dir_len": tuple(e["len_factor"] for e in dir_base),
@@ -5441,7 +6507,7 @@ def run_optimize(p, args, network_given):
                           + ("(without the series capacitor) " if args.series_c_pf is not None else "") + "at "
                           f"{args.freq:g} MHz ({len(pts)} nec2c run(s)); front grid centered on it: "
                           + ",".join(f"{v:g}" for v in front_lengths))
-                    if args.synthesize_line and abs(shift) > 1e-9 and abs_coax is None:
+                    if args.synthesize_line and abs(shift) > 1e-9 and abs_coax is None and not inner:
                         print("Line synthesis repeated for the pre-tuned front length:")
                         compute_line_bases(front=f_best)
 
@@ -5453,7 +6519,8 @@ def run_optimize(p, args, network_given):
                     ratios, phase_options(spacing), line_sets, par_offsets, par_scales):
                 cand0 = {"rear": rear_length, "front": front_length, "spacing": spacing, "ratio": ratio,
                          "phase": phase, "line_off": line_off, "line_elec": line_elec, "coax": coax_length,
-                         "z0": z0, "diam": args.element_diameter, "tap": tap,
+                         "z0": z0, "diam": args.element_diameter, "tap_r": tap, "tap_f": tap,
+                         "bar_r": args.tap_offset_mm, "bar_f": args.tap_offset_mm,
                          "ref_len": tuple(e["len_factor"] + p_off for e in ref_base),
                          "ref_sp": tuple(e["spacing_lambda"] * p_scale for e in ref_base),
                          "dir_len": tuple(e["len_factor"] + p_off for e in dir_base),
@@ -5461,196 +6528,513 @@ def run_optimize(p, args, network_given):
                 grid.append(clamp_par(cand0))
         eval_batch(grid, "grid")
 
-        # ---------------- local refinement (all moves of a round run in parallel; best improvement wins)
-        start_ev = st["best"]
-        if start_ev is None and args.refine and single and evals:
-            start_ev = min(evals, key=lambda e: (e["viol"], -e["score"]))
-            print(f"NOTE: no grid candidate meets the Zin window (R {r_min:g}..{r_max:g}, |X| <= {args.zin_x_max:g} "
-                  f"over the band). The refinement starts from the least-violating one (Zin out of the window by "
-                  f"{start_ev['viol']:.1f} ohm summed over the band) and steers Zin into the window first, "
-                  "then maximizes the score.")
-        if args.refine and start_ev is not None:
-            cur, cur_rank = dict(start_ev["cand"]), rank_of(start_ev["score"], start_ev["viol"])
-            steps = {"len": 0.01, "ang": 5.0, "sp": 0.01, "diam": 1.0, "plen": 0.01, "psp": 0.01, "tap": 10.0}
-            what = ["lengths"] + (["reflector/director lengths and spacings"] if n_par else []) \
-                + (["phase"] if not single and abs_phases is None else []) \
-                + (["line"] if single and abs_coax is None else []) + (["tap"] if tmatch else []) \
-                + ([f"spacing ({sp_lo:g}..{sp_hi:g} lambda)"] if args.refine_spacing else []) \
-                + (["element diameter"] if args.refine_diameter else [])
-            diam_txt = ("the next purchasable diameter" if diam_list else f"diameter {steps['diam']:g} mm")
-            print(f"Local refinement: {args.refine} rounds from the best grid candidate over {', '.join(what)} "
-                  f"(initial steps: lengths {steps['len']:g}, angles {steps['ang']:g} deg, spacing {steps['sp']:g} "
-                  f"lambda, {diam_txt}, reflector/director length {steps['plen']:g} and "
-                  f"spacing {steps['psp']:g} lambda" + (f", tap {steps['tap']:g} mm" if tmatch else "")
-                  + "; halved when a round does not improve).")
-            for rnd in range(args.refine):
-                moves = [("rear", "len"), ("front", "len")]
-                if cur["phase"] is not None and abs_phases is None:
-                    moves.append(("phase", "ang"))
-                if single and abs_coax is None:
-                    moves.append(("line_elec", "ang"))
-                if tmatch:
-                    moves.append(("tap", "tap"))
-                if args.refine_spacing:
-                    moves.append(("spacing", "sp"))
-                if args.refine_diameter:
-                    moves.append(("diam", "diam"))
-                for fld, sk_par in (("ref_len", "plen"), ("ref_sp", "psp"), ("dir_len", "plen"), ("dir_sp", "psp")):
-                    moves += [(("par", fld, i), sk_par) for i in range(len(cur[fld]))]
-                cands = []
-                for key, sk in moves:
-                    step = steps[sk]
-                    for sign in (1, -1):
-                        c = dict(cur)
-                        if isinstance(key, tuple):
-                            _, fld, i = key
-                            vals = list(cur[fld])
-                            vals[i] = round(vals[i] + sign * step, 6)
-                            c[fld] = tuple(vals)
-                            c = clamp_par(c)
-                            if c[fld] == tuple(cur[fld]):
-                                continue            # already at the pre-calculated limit
-                        elif key in ("rear", "front"):
-                            c[key] = round(cur[key] + sign * step, 6)
-                            if not 0.5 <= c[key] <= 1.5:
-                                continue
-                        elif key == "phase":
-                            c["phase"] = wrap180(cur["phase"] + sign * step)
-                        elif key == "line_elec":
-                            c["line_elec"] = round(cur["line_elec"] + sign * step, 6)
-                            if not line_valid(cur["spacing"], c["line_elec"]):
-                                continue
-                            c["coax"] = line_phys(c["line_elec"])
-                            c["line_off"] = line_offset_of(c)
-                        elif key == "tap":
-                            c["tap"] = round(cur["tap"] + sign * step, 3)
-                            if not tap_valid(c):
-                                continue
-                        elif key == "spacing":
-                            c["spacing"] = round(cur["spacing"] + sign * step, 6)
-                            if not sp_lo <= c["spacing"] <= sp_hi:
-                                continue
-                            if single and not line_valid(c["spacing"], cur["line_elec"]):
-                                continue                  # the line no longer spans the new spacing
-                            c["line_off"] = line_offset_of(c)
-                        else:
-                            c["diam"] = next_diameter(cur["diam"], sign, step)
-                            if c["diam"] is None:
-                                continue
-                        cands.append(c)
-                rows = eval_batch(cands, f"refined{rnd + 1}")
-                best_i, best_rank = None, cur_rank
-                for i, row in enumerate(rows):
-                    if not row:
-                        continue
-                    rk = rank_of(row["score"], viol_by_row[id(row)] if row["zin_constraint"] else 0.0)
-                    if rank_better(rk, best_rank):
-                        best_i, best_rank = i, rk
-                if best_i is not None:
-                    cur, cur_rank = cands[best_i], best_rank
-                else:
-                    steps = {k: v / 2 for k, v in steps.items()}
-            start_ev = {"cand": cur, "rank": cur_rank}
-        elif start_ev is not None:
-            start_ev = {"cand": dict(start_ev["cand"]), "rank": rank_of(start_ev["score"], start_ev["viol"])}
+        # ---------------- search variables: name, bounds (also the box of the normalized searches), step, tolerance
+        axes = []
+        rl_lo, rl_hi = max(0.5, min(rear_lengths) - 0.08), min(1.5, max(rear_lengths) + 0.08)
+        fl_lo, fl_hi = max(0.5, min(front_lengths) - 0.08), min(1.5, max(front_lengths) + 0.08)
+        axes += [{"key": "rear", "lo": rl_lo, "hi": rl_hi, "step": 0.01, "tol": 5e-4, "kind": "c"},
+                 {"key": "front", "lo": fl_lo, "hi": fl_hi, "step": 0.01, "tol": 5e-4, "kind": "c"}]
+        if not single and abs_phases is None:
+            axes.append({"key": "phase", "lo": -180.0, "hi": 180.0, "step": 5.0, "tol": 0.25, "kind": "c"})
+        if single and not inner and abs_coax is None:
+            wins = [line_window(sp) for sp in (sp_lo, sp_hi, *spacings)]
+            axes.append({"key": "line_elec", "lo": min(w[0] for w in wins), "hi": max(w[1] for w in wins),
+                         "step": 5.0, "tol": 0.25, "kind": "c"})
+        if tmatch:
+            tap_hi = 0.45 * 139.0 / args.freq * fl_lo * 1000.0
+            tap_lo = min(20.0, min(tap_list))
+            if tap_sym:
+                axes.append({"key": "tap", "lo": tap_lo, "hi": tap_hi, "step": 10.0, "tol": 0.5, "kind": "c"})
+            else:
+                axes += [{"key": "tap_r", "lo": tap_lo, "hi": tap_hi, "step": 10.0, "tol": 0.5, "kind": "c"},
+                         {"key": "tap_f", "lo": tap_lo, "hi": tap_hi, "step": 10.0, "tol": 0.5, "kind": "c"}]
+        if tmatch and args.search_bars:
+            d_el = max(d_max if args.refine_diameter else 0.0, *(sec[1] for w in ("rear", "front")
+                                                              for sec in element_sections(args, w)))
+            bar_lo = max(BAR_MIN_MM, BAR_MIN_DIAMETERS * d_el)
+            bar_hi = max(bar_lo + 10.0, BAR_MAX_MM)
+            if tap_sym:
+                axes.append({"key": "bar", "lo": bar_lo, "hi": bar_hi, "step": 5.0, "tol": 0.5, "kind": "c"})
+            else:
+                axes += [{"key": "bar_r", "lo": bar_lo, "hi": bar_hi, "step": 5.0, "tol": 0.5, "kind": "c"},
+                         {"key": "bar_f", "lo": bar_lo, "hi": bar_hi, "step": 5.0, "tol": 0.5, "kind": "c"}]
+        if args.refine_spacing:
+            axes.append({"key": "spacing", "lo": sp_lo, "hi": sp_hi, "step": 0.01, "tol": 5e-4, "kind": "c"})
+        if args.refine_diameter:
+            axes.append({"key": "diam", "lo": d_min, "hi": d_max, "step": 1.0, "tol": 0.05,
+                         "kind": "d" if diam_list else "c"})
+        for fld, lims in (("ref_len", ref_lim), ("dir_len", dir_lim)):
+            for i, L in enumerate(lims):
+                axes.append({"key": ("par", fld, i), "lo": L["len_min"], "hi": L["len_max"], "step": 0.01,
+                             "tol": 5e-4, "kind": "c"})
+        for fld, lims in (("ref_sp", ref_lim), ("dir_sp", dir_lim)):
+            for i, L in enumerate(lims):
+                axes.append({"key": ("par", fld, i), "lo": L["sp_min"], "hi": L["sp_max"], "step": 0.01,
+                             "tol": 5e-4, "kind": "c"})
 
-        # ---------------- Nelder-Mead polish of the continuous parameters (handles correlated moves, e.g.
-        # front length against line length, that a one-axis-at-a-time search cannot follow)
-        if args.nm_evals and start_ev is not None:
-            base_c = start_ev["cand"]
-            keys = [("rear", 0.01), ("front", 0.01)]
-            if args.refine_spacing:
-                keys.append(("spacing", 0.01))
-            if single and abs_coax is None:
-                keys.append(("line_elec", 5.0))
-            if tmatch:
-                keys.append(("tap", 10.0))
-            if base_c["phase"] is not None and abs_phases is None:
-                keys.append(("phase", 5.0))
-            if args.refine_diameter and diam_list is None:
-                keys.append(("diam", 1.0))
+        def get_val(c, key):
+            if isinstance(key, tuple):
+                return c[key[1]][key[2]]
+            return c["tap_r"] if key == "tap" else c["bar_r"] if key == "bar" else c[key]
 
-            def nm_cand(x):
-                c = dict(base_c)
-                for (k, _), v in zip(keys, x):
-                    c[k] = round(v, 2) if k == "diam" else round(v, 6)
-                if not (0.5 <= c["rear"] <= 1.5 and 0.5 <= c["front"] <= 1.5):
-                    return None
-                if args.refine_spacing and not sp_lo <= c["spacing"] <= sp_hi:
-                    return None
-                if args.refine_diameter and not d_min - 1e-9 <= c["diam"] <= d_max + 1e-9:
-                    return None
-                if c["phase"] is not None:
-                    c["phase"] = wrap180(c["phase"])
-                if tmatch and not tap_valid(c):
-                    return None
-                if single and not line_valid(c["spacing"], c["line_elec"]):
-                    return None
-                if single and abs_coax is None:
-                    c["coax"] = line_phys(c["line_elec"])
-                c["line_off"] = line_offset_of(c)
-                return c
-
-            def nm_value(rank):
-                """Scalar to minimize: -score when Zin is in its window, otherwise 1000 + violation."""
-                return rank[1] if rank[0] == 0 else 1e3 + rank[1] + 1e-3 * rank[2]
-
-            budget = {"left": args.nm_evals}
-            cache = {}
-
-            def nm_eval_many(xs):
-                todo, out = [], [None] * len(xs)
-                for i, x in enumerate(xs):
-                    key = tuple(round(v, 6) for v in x)
-                    if key in cache:
-                        out[i] = cache[key]
-                        continue
-                    c = nm_cand(x)
-                    if c is None:
-                        cache[key] = out[i] = math.inf
-                        continue
-                    todo.append((i, key, c))
-                todo = todo[:max(0, budget["left"])]
-                if todo:
-                    budget["left"] -= len(todo)
-                    rows = eval_batch([c for _, _, c in todo], "nelder-mead")
-                    for (i, key, _), row in zip(todo, rows):
-                        val = math.inf if not row else nm_value(
-                            rank_of(row["score"], viol_by_row[id(row)] if row["zin_constraint"] else 0.0))
-                        cache[key] = out[i] = val
-                return [math.inf if v is None else v for v in out]
-
-            x0 = [base_c[k] for k, _ in keys]
-            simplex = [x0] + [[v + (st_ if j == i else 0.0) for j, (v, (_, st_)) in enumerate(zip(x0, keys))]
-                              for i in range(len(keys))]
-            cache[tuple(round(v, 6) for v in x0)] = nm_value(start_ev["rank"])
-            print(f"Nelder-Mead polish over {', '.join(k for k, _ in keys)} (budget {args.nm_evals} nec2c runs).")
-            fvals = nm_eval_many(simplex)
-            while budget["left"] > 0:
-                order = sorted(range(len(simplex)), key=lambda i: fvals[i])
-                simplex, fvals = [simplex[i] for i in order], [fvals[i] for i in order]
-                if not math.isfinite(fvals[0]) or abs(fvals[-1] - fvals[0]) < 1e-3:
-                    break
-                cen = [sum(v[j] for v in simplex[:-1]) / (len(simplex) - 1) for j in range(len(keys))]
-                worst_x = simplex[-1]
-                xr = [c_ + (c_ - w_) for c_, w_ in zip(cen, worst_x)]
-                fr = nm_eval_many([xr])[0]
-                if fr < fvals[0]:
-                    xe = [c_ + 2.0 * (c_ - w_) for c_, w_ in zip(cen, worst_x)]
-                    fe = nm_eval_many([xe])[0]
-                    simplex[-1], fvals[-1] = (xe, fe) if fe < fr else (xr, fr)
-                elif fr < fvals[-2]:
-                    simplex[-1], fvals[-1] = xr, fr
-                else:
-                    xc = [c_ + 0.5 * (w_ - c_) for c_, w_ in zip(cen, worst_x)]
-                    fc = nm_eval_many([xc])[0]
-                    if fc < fvals[-1]:
-                        simplex[-1], fvals[-1] = xc, fc
+        def build(c, changes):
+            """Candidate c with the variables in changes ({axis key: value}) set, or None when the result is not a
+            valid model (lengths 0.5..1.5, spacing window, buildable line, taps on the elements, diameter range)."""
+            d = dict(c)
+            for key, v in changes.items():
+                if isinstance(key, tuple):
+                    _, fld, i = key
+                    vals = list(d[fld])
+                    vals[i] = round(v, 6)
+                    d[fld] = tuple(vals)
+                elif key in ("rear", "front", "spacing"):
+                    d[key] = round(v, 6)
+                elif key == "phase":
+                    d["phase"] = wrap180(v)
+                elif key == "line_elec":
+                    d["line_elec"] = round(v, 6)
+                elif key in ("tap_r", "tap_f"):
+                    d[key] = round(v, 3)
+                elif key == "tap":
+                    d["tap_r"] = d["tap_f"] = round(v, 3)
+                elif key in ("bar_r", "bar_f"):
+                    d[key] = round(v, 3)
+                elif key == "bar":
+                    d["bar_r"] = d["bar_f"] = round(v, 3)
+                elif key == "diam":
+                    if diam_list:
+                        d["diam"] = min(diam_list, key=lambda x: abs(x - v))
                     else:
-                        shrunk = [[b_ + 0.5 * (v - b_) for v, b_ in zip(x, simplex[0])] for x in simplex[1:]]
-                        simplex[1:] = shrunk
-                        fvals[1:] = nm_eval_many(shrunk)
-            print(f"Nelder-Mead finished ({args.nm_evals - budget['left']} runs).")
+                        d["diam"] = round(v, 2)
+                        if not d_min - 1e-9 <= d["diam"] <= d_max + 1e-9:
+                            return None
+            d = clamp_par(d)
+            if not (0.5 <= d["rear"] <= 1.5 and 0.5 <= d["front"] <= 1.5):
+                return None
+            if "spacing" in changes and not sp_lo - 1e-12 <= d["spacing"] <= sp_hi + 1e-12:
+                return None
+            if tmatch and (d["bar_r"] + d["bar_f"]) / 1000.0 >= d["spacing"] * lam - BAR_LINE_ROOM_M:
+                return None                     # no room for the phase line between the two T-bars
+            if single and not inner and d["line_elec"] is not None:
+                if not line_valid(d["spacing"], d["line_elec"], bars_of(d)):
+                    return None
+                d["coax"] = line_phys(d["line_elec"])
+            d["line_off"] = None if inner else line_offset_of(d)
+            if tmatch and not tap_valid(d):
+                return None
+            return d
+
+        def move(c, ax, sign, step):
+            """Candidate c moved by one step along axis ax (the next purchasable tube for a discrete diameter)."""
+            if ax["kind"] == "d":
+                v = next_diameter(c["diam"], sign, step)
+                return None if v is None else build(c, {"diam": v})
+            return build(c, {ax["key"]: get_val(c, ax["key"]) + sign * step})
+
+        def to_u(c, which=None):
+            """Normalized coordinates (0..1 in each axis box) of a candidate."""
+            return [(get_val(c, ax["key"]) - ax["lo"]) / max(ax["hi"] - ax["lo"], 1e-12) for ax in (which or axes)]
+
+        def from_u(base, u, which):
+            """Candidate from normalized coordinates u (projected onto the box) on the axes which; None if invalid."""
+            ch = {ax["key"]: ax["lo"] + min(max(x, 0.0), 1.0) * (ax["hi"] - ax["lo"]) for ax, x in zip(which, u)}
+            return build(base, ch)
+
+        def pattern_search(c0, rk0, budget, rounds, label):
+            """Coordinate pattern search: every round tries +-step on every active axis in parallel, combines the
+            improving moves of all axes into one point (kept when it beats the best single move), halves the step of
+            each axis that improved in neither direction and stops at the step tolerance of every axis, at budget new
+            simulations or after rounds. Returns (candidate, rank, stop reason, simulations)."""
+            cur, cur_rank = c0, rk0
+            steps = {repr(ax["key"]): ax["step"] for ax in axes}
+            done_d = set()
+            used0, reason = st["total"], "round limit"
+            for rnd in range(rounds):
+                active = [ax for ax in axes if (repr(ax["key"]) not in done_d) if ax["kind"] == "d"
+                          or steps[repr(ax["key"])] > ax["tol"]]
+                if not active:
+                    reason = "step tolerance"
+                    break
+                if st["total"] - used0 >= budget:
+                    reason = "budget"
+                    break
+                moves = []
+                for ax in active:
+                    for sign in (1, -1):
+                        c = move(cur, ax, sign, steps[repr(ax["key"])])
+                        if c is not None and cand_key(c) != cand_key(cur):
+                            moves.append((ax, sign, c))
+                if not moves:
+                    reason = "no admissible move"
+                    break
+                rows = eval_batch([m_[2] for m_ in moves], f"{label}-r{rnd + 1}")
+                best_axis = {}
+                for (ax, sign, c), row in zip(moves, rows):
+                    rk = row_rank(row)
+                    k = repr(ax["key"])
+                    if rk is not None and rank_better(rk, cur_rank) and (k not in best_axis
+                                                                         or rank_better(rk, best_axis[k][2])):
+                        best_axis[k] = (ax, sign, rk, c)
+                for ax in active:
+                    k = repr(ax["key"])
+                    if k not in best_axis:
+                        if ax["kind"] == "d":
+                            done_d.add(k)
+                        else:
+                            steps[k] /= 2.0
+                if not best_axis:
+                    continue
+                pick = min(best_axis.values(), key=lambda t: t[2])
+                best_c, best_rk = pick[3], pick[2]
+                if len(best_axis) >= 2:
+                    comb = cur
+                    for ax, sign, _rk, _c in best_axis.values():
+                        nxt = move(comb, ax, sign, steps[repr(ax["key"])])
+                        comb = nxt if nxt is not None else comb
+                    if comb is not cur and cand_key(comb) != cand_key(best_c):
+                        rk = row_rank(eval_batch([comb], f"{label}-r{rnd + 1}")[0])
+                        if rk is not None and rank_better(rk, best_rk):
+                            best_c, best_rk = comb, rk
+                cur, cur_rank = best_c, best_rk
+            return cur, cur_rank, reason, st["total"] - used0
+
+        def nelder_mead(c0, rk0, budget, label):
+            """Nelder-Mead on the normalized continuous axes (box-projected), adaptive coefficients (Gao and Han), one
+            restart from the best vertex after convergence. Stops at budget new simulations or when the values and the
+            simplex size fall below 1e-3. Returns (candidate, rank, stop reason, simulations)."""
+            cont = [ax for ax in axes if ax["kind"] == "c"]
+            n = len(cont)
+            if not n or budget <= 0:
+                return c0, rk0, "no variables" if not n else "budget", 0
+            alpha, beta, gamma, delta = 1.0, 1.0 + 2.0 / n, 0.75 - 1.0 / (2.0 * n), 1.0 - 1.0 / n
+            used0 = st["total"]
+            best = {"c": c0, "rk": rk0}
+
+            def fvals(us):
+                cs = [from_u(c0, u, cont) for u in us]
+                todo = [c for c in cs if c is not None]
+                rows = eval_batch(todo, label) if todo else []
+                it = iter(rows)
+                out = []
+                for c in cs:
+                    if c is None:
+                        out.append(math.inf)
+                        continue
+                    rk = row_rank(next(it))
+                    if rk is None:
+                        out.append(math.inf)
+                        continue
+                    if rank_better(rk, best["rk"]):
+                        best["c"], best["rk"] = c, rk
+                    out.append(nm_value(rk))
+                return out
+
+            def simplex_at(x0, size):
+                pts = [list(x0)]
+                for i in range(n):
+                    x = list(x0)
+                    x[i] = x[i] + size if x[i] + size <= 1.0 else x[i] - size
+                    pts.append(x)
+                return pts
+
+            reason = "budget"
+            x0 = to_u(c0, cont)
+            for restart, size in enumerate((0.05, 0.025)):
+                simplex = simplex_at(x0, size)
+                fv = fvals(simplex)
+                while st["total"] - used0 < budget:
+                    order = sorted(range(n + 1), key=lambda i: fv[i])
+                    simplex, fv = [simplex[i] for i in order], [fv[i] for i in order]
+                    if not math.isfinite(fv[0]):
+                        reason = "no valid vertex"
+                        break
+                    diam_s = max(max(abs(a - b) for a, b in zip(x, simplex[0])) for x in simplex[1:])
+                    if abs(fv[-1] - fv[0]) < 1e-3 and diam_s < 1e-3:
+                        reason = "converged"
+                        break
+                    cen = [sum(x[j] for x in simplex[:-1]) / n for j in range(n)]
+                    w_ = simplex[-1]
+                    xr = [c_ + alpha * (c_ - q) for c_, q in zip(cen, w_)]
+                    fr = fvals([xr])[0]
+                    if fr < fv[0]:
+                        xe = [c_ + beta * (r_ - c_) for c_, r_ in zip(cen, xr)]
+                        fe = fvals([xe])[0]
+                        simplex[-1], fv[-1] = (xe, fe) if fe < fr else (xr, fr)
+                    elif fr < fv[-2]:
+                        simplex[-1], fv[-1] = xr, fr
+                    else:
+                        if fr < fv[-1]:
+                            xc = [c_ + gamma * (r_ - c_) for c_, r_ in zip(cen, xr)]
+                        else:
+                            xc = [c_ + gamma * (q - c_) for c_, q in zip(cen, w_)]
+                        fc = fvals([xc])[0]
+                        if fc < min(fr, fv[-1]):
+                            simplex[-1], fv[-1] = xc, fc
+                        else:
+                            simplex[1:] = [[b_ + delta * (v - b_) for v, b_ in zip(x, simplex[0])] for x in simplex[1:]]
+                            fv[1:] = fvals(simplex[1:])
+                if reason != "converged" or st["total"] - used0 >= budget - n - 1:
+                    break
+                x0 = to_u(best["c"], cont)
+                reason = "budget"
+            return best["c"], best["rk"], reason, st["total"] - used0
+
+        def cmaes_search(c0, rk0, budget, label):
+            """CMA-ES on the normalized continuous axes (population evaluated in parallel); points outside the box
+            are projected onto it and pay 10 x their squared distance to it. Returns (candidate, rank, stop reason,
+            simulations)."""
+            cont = [ax for ax in axes if ax["kind"] == "c"]
+            if not cont or budget <= 0:
+                return c0, rk0, "no variables" if cont else "budget", 0
+            used0 = st["total"]
+            best = {"c": c0, "rk": rk0}
+
+            def f_batch(us):
+                cs = [from_u(c0, u, cont) for u in us]
+                todo = [c for c in cs if c is not None]
+                rows = eval_batch(todo, label) if todo else []
+                it = iter(rows)
+                out = []
+                for u, c in zip(us, cs):
+                    pen = 10.0 * sum((x - min(max(x, 0.0), 1.0)) ** 2 for x in u)
+                    if c is None:
+                        out.append(math.inf)
+                        continue
+                    rk = row_rank(next(it))
+                    if rk is None:
+                        out.append(math.inf)
+                        continue
+                    if rank_better(rk, best["rk"]):
+                        best["c"], best["rk"] = c, rk
+                    out.append(nm_value(rk) + pen)
+                return out
+
+            _x, _f, _used, reason = cma_es(f_batch, to_u(c0, cont), 0.12, budget, seed=args.tol_seed)
+            return best["c"], best["rk"], reason, st["total"] - used0
+
+        # ---------------- space-filling samples (--lhs) around the grid box
+        center = center_candidate()
+        if args.lhs and center is not None:
+            cont_all = [ax for ax in axes if ax["kind"] == "c"]
+            lhs_c = [from_u(center, u, cont_all) for u in latin_hypercube(args.lhs, len(cont_all), args.tol_seed + 3)]
+            lhs_c = [c for c in lhs_c if c is not None]
+            print(f"Latin-hypercube start: {len(lhs_c)} candidate(s) over {len(cont_all)} variable(s).")
+            eval_batch(lhs_c, "lhs")
+
+        # ---------------- local search from the best distinct starting points
+        n_ax = len(axes)
+        refine_budget = args.refine_evals if args.refine_evals is not None else 10 * n_ax
+        nm_budget = args.nm_evals if args.nm_evals is not None else 15 * n_ax
+        search_stops = []
+        pool_ev = sorted((e for e in evals if e["ok"]), key=lambda e: rank_of(e["score"], e["viol"]))
+        if not pool_ev and single:
+            pool_ev = sorted(evals, key=lambda e: (e["viol"], -e["score"]))
+            if pool_ev and (args.refine or nm_budget):
+                print(f"NOTE: no grid candidate meets the Zin window (R {r_min:g}..{r_max:g}, |X| <= "
+                      f"{args.zin_x_max:g} over the band). The search starts from the least-violating one(s) and "
+                      "steers Zin into the window first, then maximizes the score.")
+        starts = select_basins(pool_ev, lambda e: to_u(e["cand"]), args.starts, BASIN_RADIUS) if axes else []
+        if starts and (args.refine or nm_budget):
+            names = ", ".join((k[1] + str(k[2] + 1)) if isinstance(k, tuple) else k
+                              for k in (ax["key"] for ax in axes))
+            print(f"Local search ({args.search}) from {len(starts)} starting point(s) over {n_ax} variable(s): {names}; "
+                  + (f"CMA-ES budget {refine_budget + nm_budget}" if args.search == "cmaes" else
+                     f"pattern search up to {args.refine} rounds / {refine_budget} runs, then Nelder-Mead "
+                     f"{nm_budget} runs") + " per start.")
+        for k_s, ev in enumerate(starts):
+            c, rk = dict(ev["cand"]), rank_of(ev["score"], ev["viol"])
+            tag = f"s{k_s + 1}"
+            if args.search == "cmaes":
+                c, rk, why, used = cmaes_search(c, rk, refine_budget + nm_budget, f"{tag}-cmaes")
+                search_stops.append(f"start {k_s + 1}: CMA-ES {used} runs ({why})")
+            else:
+                why_p = why_n = "off"
+                used_p = used_n = 0
+                if args.refine:
+                    c, rk, why_p, used_p = pattern_search(c, rk, refine_budget, args.refine, f"{tag}-pattern")
+                if nm_budget:
+                    c, rk, why_n, used_n = nelder_mead(c, rk, nm_budget, f"{tag}-nelder-mead")
+                search_stops.append(f"start {k_s + 1}: pattern search {used_p} runs ({why_p}), Nelder-Mead "
+                                    f"{used_n} runs ({why_n})")
+            print(f"Start {k_s + 1}: best score {-rk[1]:.2f}" if rk[0] == 0 else
+                  f"Start {k_s + 1}: still outside the Zin window by {rk[1]:.1f} ohm")
+        for line_ in search_stops:
+            print(f"Search stop: {line_}")
+
+        # ---------------- parasitic lengths on the multiport model: a probe run per port (feed points and the center
+        # of every reflector/director) gives the antenna for any reactance in series at the parasitic centers; a length
+        # change of a parasitic element acts as such a reactance (its slope dX/dL from a second probe set with every
+        # parasitic element lengthened). The lengths that maximize the score on that model (with the phase line solved
+        # for each of them) are then simulated exactly and kept only when they improve the best candidate.
+        if args.parasitic_inner and inner and n_par and st["best"] is not None:
+            par_keys = ([("ref_len", i, TAG_REFLECTOR0 + 1 + i) for i in range(args.reflectors)]
+                        + [("dir_len", i, TAG_DIRECTOR0 + 1 + i) for i in range(args.directors)])
+            lims = {("ref_len", i): L for i, L in enumerate(ref_lim)}
+            lims.update({("dir_len", i): L for i, L in enumerate(dir_lim)})
+            print(f"Parasitic lengths on the multiport model: up to {args.parasitic_inner} round(s), "
+                  f"{2 * (2 + n_par)} probe runs each.")
+            for rnd in range(args.parasitic_inner):
+                c0 = dict(st["best"]["cand"])
+                rk0 = rank_of(st["best"]["score"], st["best"]["viol"])
+                g0 = gargs_from(c0)
+                deltas = {}
+                for fld, i, _tag in par_keys:
+                    lim = lims[(fld, i)]
+                    deltas[(fld, i)] = PAR_PROBE_DELTA if c0[fld][i] + PAR_PROBE_DELTA <= lim["len_max"] else -PAR_PROBE_DELTA
+                c_d = build(c0, {("par", fld, i): c0[fld][i] + deltas[(fld, i)] for fld, i, _t in par_keys})
+                if c_d is None:
+                    break
+                try:
+                    with tempfile.TemporaryDirectory(dir=td, prefix="mport_") as tdm:
+                        mp0 = multiport_response(exe, g0, tdm, freqs)
+                        mp1 = multiport_response(exe, gargs_from(c_d), tdm, freqs)
+                except (ValueError, OSError) as exc:
+                    print(f"NOTE: multiport probe failed ({exc}); the parasitic lengths stay as searched.")
+                    break
+                slopes = []
+                for m0, m1 in zip(mp0, mp1):
+                    z0m, z1m = multiport_z(m0), multiport_z(m1)
+                    slopes.append({tag: ((z1m[(tag, tag)] - z0m[(tag, tag)]) / (deltas[(fld, i)] * l_res_par)).imag
+                                   for fld, i, tag in par_keys})
+                t_lo, t_hi = line_window(c0["spacing"], bars_of(c0))
+                lo_v = [lims[(fld, i)]["len_min"] - c0[fld][i] for fld, i, _t in par_keys]
+                hi_v = [lims[(fld, i)]["len_max"] - c0[fld][i] for fld, i, _t in par_keys]
+
+                def mp_value(dv):
+                    """nm_value of the multiport model with the parasitic length changes dv (length factors)."""
+                    reduced = [reduce_multiport(m0, {tag: 1j * sl[tag] * d_ * l_res_par
+                                                     for (_f, _i, tag), d_ in zip(par_keys, dv)})
+                               for m0, sl in zip(mp0, slopes)]
+                    try:
+                        return inner_solve(reduced, g0, score_spec, design_i, t_lo, t_hi, z0_bounds)["value"]
+                    except (ValueError, ZeroDivisionError):
+                        return math.inf
+
+                dv, v_best = nm_minimize(mp_value, [0.0] * len(par_keys), [0.01] * len(par_keys), lo_v, hi_v,
+                                         PARASITIC_INNER_EVALS_PER_VAR * len(par_keys))
+                v0 = mp_value([0.0] * len(par_keys))
+                if not v_best < v0 - 1e-6:
+                    print(f"Parasitic round {rnd + 1}: the multiport model finds no better lengths.")
+                    break
+                accepted = False
+                for scale in (1.0, 0.5):
+                    c_new = build(c0, {("par", fld, i): c0[fld][i] + scale * d_
+                                       for (fld, i, _t), d_ in zip(par_keys, dv)})
+                    row = eval_batch([c_new], f"parasitic-inner{rnd + 1}")[0] if c_new is not None else None
+                    rk = row_rank(row)
+                    if rk is not None and rank_better(rk, rk0):
+                        print(f"Parasitic round {rnd + 1}: lengths moved by "
+                              + ", ".join(f"{d_ * scale:+.4f}" for d_ in dv) + f" (model score {-v_best:.2f}, simulated "
+                              f"{row['score']:.2f}; before {-rk0[1]:.2f}).")
+                        accepted = True
+                        break
+                if not accepted:
+                    print(f"Parasitic round {rnd + 1}: the simulated lengths do not improve the best candidate; stop.")
+                    break
+
+        def tolerance_sensitivity(ev):
+            """Sensitivity table of the evaluated candidate ev (see the comment at its call)."""
+            c = dict(ev["cand"])
+            base = final_gargs(c)
+            if "series_c" not in c and ev["per_freq"][design_i].get("series_c_pf"):
+                base.series_c_pf = ev["per_freq"][design_i]["series_c_pf"]
+            net_nom = ev["per_freq"][design_i].get("m_net") if (single and args.match_score) else None
+            dims = []      # (name, tolerance text, function(sign) -> gargs or None)
+
+            def geo(key, step):
+                def make(sign):
+                    d = build(c, {key: get_val(c, key) + sign * step})
+                    if d is None:
+                        return None
+                    g = gargs_from(d)
+                    g.series_c_pf = base.series_c_pf
+                    return g
+                return make
+
+            f0 = args.freq
+            dims.append(("rear element length", f"+-{args.tol_length_mm:g} mm",
+                         geo("rear", args.tol_length_mm / 1000.0 / (150.0 / f0))))
+            dims.append(("front element length", f"+-{args.tol_length_mm:g} mm",
+                         geo("front", args.tol_length_mm / 1000.0 / (139.0 / f0))))
+            dims.append(("element spacing", f"+-{args.tol_spacing_mm:g} mm",
+                         geo("spacing", args.tol_spacing_mm / 1000.0 / lam)))
+            if tmatch:
+                for k_, nm_ in (("tap_r", "rear tap"), ("tap_f", "front tap")):
+                    dims.append((nm_, f"+-{args.tol_tap_mm:g} mm", geo(k_, args.tol_tap_mm)))
+                for k_, nm_ in (("bar_r", "rear T-bar offset"), ("bar_f", "front T-bar offset")):
+                    dims.append((nm_, f"+-{args.tol_bar_mm:g} mm", geo(k_, args.tol_bar_mm)))
+            for fld, role in (("ref_len", "reflector"), ("dir_len", "director")):
+                for i in range(len(c[fld])):
+                    dims.append((f"{role} {i + 1} length", f"+-{args.tol_length_mm:g} mm",
+                                 geo(("par", fld, i), args.tol_length_mm / 1000.0 / l_res_par)))
+            for fld, role in (("ref_sp", "reflector"), ("dir_sp", "director")):
+                for i in range(len(c[fld])):
+                    dims.append((f"{role} {i + 1} spacing", f"+-{args.tol_spacing_mm:g} mm",
+                                 geo(("par", fld, i), args.tol_spacing_mm / 1000.0 / lam)))
+
+            def var(**kw):
+                def make(sign):
+                    return _variant(base, **{k: v(sign) for k, v in kw.items()})
+                return make
+
+            if single and c.get("line_elec") is not None:
+                if args.network == "tl":
+                    def line_len(sign):
+                        g = _variant(base)
+                        g.coax_length = line_phys_length(c["line_elec"] + sign * args.tol_line_deg, lam, args.coax_vf)
+                        return g
+                    dims.append(("phase line length", f"+-{args.tol_line_deg:g} deg", line_len))
+                    dims.append(("phase line VF", f"+-{args.tol_vf_pct:g} %",
+                                 var(coax_vf=lambda sg: min(1.0, base.coax_vf * (1.0 + sg * args.tol_vf_pct / 100.0)))))
+                    dims.append(("phase line Z0", f"+-{args.tol_z0_pct:g} %",
+                                 var(coax_z0=lambda sg: base.coax_z0 * (1.0 + sg * args.tol_z0_pct / 100.0))))
+                else:
+                    dims.append(("LC network phase", f"+-{args.tol_line_deg:g} deg",
+                                 var(line_deg=lambda sg: min(max(c["line_elec"] + sg * args.tol_line_deg, 0.5), 179.5))))
+                    dims.append(("LC network Z0", f"+-{args.tol_z0_pct:g} %",
+                                 var(lc_z0=lambda sg: base.lc_z0 * (1.0 + sg * args.tol_z0_pct / 100.0))))
+                c_nom = series_c_value(base)
+                if c_nom:
+                    dims.append(("series capacitor", f"+-{args.tol_c_pct:g} %",
+                                 var(series_c_pf=lambda sg: c_nom * (1.0 + sg * args.tol_c_pct / 100.0))))
+            jobs, meta = [job_for("sens_nominal", c, freqs, gargs=base)], [None]
+            for di, (_n, _t, make) in enumerate(dims):
+                for sign in (1, -1):
+                    g = make(sign)
+                    if g is not None:
+                        jobs.append(job_for(f"sens_{di:02d}_{'p' if sign > 0 else 'm'}", c, freqs, gargs=g))
+                        meta.append((di, sign))
+            print(f"Tolerance sensitivity of the best design: {len(dims)} dimension(s), {len(jobs)} simulation(s).")
+            res_by = {}
+            for m_, res in zip(meta, run_jobs(pool, jobs)):
+                if res.get("ok"):
+                    pf_ = res["per_freq"]
+                    sc_ = score_candidate(pf_, net_nom)[0]
+                    res_by[m_] = (sc_, min(x[fb_key] for x in pf_), min(x["forward_gain"] for x in pf_),
+                                  pf_[design_i]["zin"])
+            if None not in res_by:
+                print("WARNING: the nominal simulation of the sensitivity analysis failed.", file=sys.stderr)
+                return None
+            s0, fb0, g0, z0_ = res_by[None]
+            rows = []
+            for di, (name_, tol_txt, _m) in enumerate(dims):
+                vals = [res_by.get((di, sg)) for sg in (1, -1)]
+                if not any(vals):
+                    continue
+                d_sc = [v[0] - s0 for v in vals if v]
+                d_fb = [v[1] - fb0 for v in vals if v]
+                d_g = [v[2] - g0 for v in vals if v]
+                d_z = [abs(v[3] - z0_) for v in vals if v and v[3] is not None and z0_ is not None]
+                rows.append({"dimension": name_, "tolerance": tol_txt, "score_drop": max(0.0, -min(d_sc)),
+                             "fb_drop": max(0.0, -min(d_fb)), "gain_drop": max(0.0, -min(d_g)),
+                             "zin_shift": max(d_z) if d_z else 0.0, "d_score": d_sc, "d_fb": d_fb})
+            rows.sort(key=lambda r: -r["score_drop"])
+            out = {"rows": rows, "score": s0, "fb": fb0, "fb_metric": args.fb_metric,
+                   "score_drop_sum": sum(r["score_drop"] for r in rows),
+                   "score_drop_rss": math.sqrt(sum(r["score_drop"] ** 2 for r in rows)),
+                   "fb_drop_sum": sum(r["fb_drop"] for r in rows),
+                   "fb_drop_rss": math.sqrt(sum(r["fb_drop"] ** 2 for r in rows))}
+            return out
 
         # ---------------- Monte-Carlo tolerance analysis of the best K candidates. The perturbations are drawn
         # once and applied to every candidate (common random numbers), so differences between candidates come
@@ -5658,7 +7042,10 @@ def run_optimize(p, args, network_given):
         mc_done = False
         if args.tolerance_mc > 0 and st["best"] is not None:
             rng = random.Random(args.tol_seed)
-            top = sorted((e for e in evals if e["ok"]), key=lambda e: e["score"], reverse=True)[:args.tol_top_k]
+            # Distinct designs: the best candidate of each basin (no two closer than BASIN_RADIUS in the normalized
+            # search box), so the robust ranking compares different designs, not neighbours of one optimum.
+            top = select_basins(sorted((e for e in evals if e["ok"]), key=lambda e: e["score"], reverse=True),
+                                lambda e: to_u(e["cand"]), args.tol_top_k, BASIN_RADIUS)
             dist_txt = ("uniform" if args.tol_dist == "uniform" else
                         "normal, tolerance = 2 sigma, clipped at 3 sigma")
             tol_txt = [f"elements +-{args.tol_length_mm:g} mm", f"spacing +-{args.tol_spacing_mm:g} mm",
@@ -5699,10 +7086,10 @@ def run_optimize(p, args, network_given):
                     # A built tap stays on the element: 1.5 segments from the center, one segment from the tip.
                     length = min(150.0 / args.freq * d["rear"], 139.0 / args.freq * d["front"]) * 1000.0
                     seg = length / args.segments
-                    for w, kt, kb in (("rear", "tr", "br"), ("front", "tf", "bf")):
-                        tap = d["tap"] + u[kt] * args.tol_tap_mm
+                    for w, kt, kb, kc, kd in (("rear", "tr", "br", "tap_r", "bar_r"), ("front", "tf", "bf", "tap_f", "bar_f")):
+                        tap = d[kc] + u[kt] * args.tol_tap_mm
                         setattr(g, f"tap_mm_{w}", min(max(tap, 1.5 * seg), length / 2.0 - seg))
-                        setattr(g, f"tap_offset_mm_{w}", max(1.0, args.tap_offset_mm + u[kb] * args.tol_bar_mm))
+                        setattr(g, f"tap_offset_mm_{w}", max(1.0, d[kd] + u[kb] * args.tol_bar_mm))
                 if args.network == "tl":
                     g.coax_vf = min(1.0, args.coax_vf * (1.0 + u["vf"] * args.tol_vf_pct / 100.0))
                     g.coax_z0 = g.coax_z0 * (1.0 + u["z0"] * args.tol_z0_pct / 100.0)
@@ -5731,7 +7118,8 @@ def run_optimize(p, args, network_given):
                         elec = min(max(elec, 0.01), 179.99)
                     else:
                         # a built line is never shorter than the distance it spans, and the error never wraps
-                        elec = min(max(elec, 0.01, min_line(d["spacing"])), max(max_line(d["spacing"]), c["line_elec"]))
+                        elec = min(max(elec, 0.01, min_line(d["spacing"], bars_of(d))),
+                                   max(max_line(d["spacing"], bars_of(d)), c["line_elec"]))
                     d["line_elec"] = elec
                     d["coax"] = line_phys_length(elec, lam, args.coax_vf) if args.network == "tl" else None
                     d["line_off"] = None
@@ -5790,6 +7178,13 @@ def run_optimize(p, args, network_given):
                 st["best"] = new_best
                 mc_done = True
 
+        # ---------------- first-order tolerance sensitivity of the best design: every build dimension moved by its
+        # tolerance (--tol-*) in both directions, one at a time, with the phase line, the series capacitor and the
+        # matching network as built; worst-case (linear sum) and RSS score / F/B drops.
+        sensitivity = None
+        if args.sensitivity and st["best"] is not None:
+            sensitivity = tolerance_sensitivity(st["best"])
+
         zin_window_met = st["best"] is not None
         if st["best"] is None and evals and single and not args.strict_zin:
             # No candidate meets the Zin window: the closest one is reported and written, flagged as such.
@@ -5807,6 +7202,12 @@ def run_optimize(p, args, network_given):
             if final["ok"]:
                 final["deck_text"] = Path(final["deck_path"]).read_text(errors="replace")
                 final["out_text"] = Path(final["out_path"]).read_text(errors="replace")
+                if inner and best_ev["row"].get("inner_line"):
+                    # The candidate rows come from the superposed probe fields: compare with the full simulation.
+                    fp, pp = final["per_freq"][0], best_ev["per_freq"][design_i]
+                    dz = abs(fp["zin"] - pp["zin"]) if fp["zin"] is not None and pp["zin"] is not None else 0.0
+                    dg, dfb = fp["forward_gain"] - pp["forward_gain"], fp[fb_key] - pp[fb_key]
+                    final["inner_check"] = (dg, dfb, dz)
 
     # ---------------- report
     warn_runs, warn_total = st["warn_runs"], st["warn_total"]
@@ -5869,6 +7270,13 @@ def run_optimize(p, args, network_given):
         deck_text = build_deck(_variant(final_gargs(best_ev["cand"]), pattern_mode="ring", ring_theta=90.0,
                                         band_freqs=None, pt_mode=0))[0]
         output.write_text(deck_text, encoding="ascii", errors="replace")
+    if final and final.get("inner_check"):
+        dg, dfb, dz = final["inner_check"]
+        bad = abs(dg) > 0.05 or abs(dfb) > 0.5 or dz > 1.0
+        print(("WARNING: " if bad else "") + f"Line-solver check at {args.freq:g} MHz (full nec2c run of the best model "
+              f"against the probe superposition): gain {dg:+.3f} dB, F/B ({args.fb_metric}) {dfb:+.2f} dB, |delta Zin| "
+              f"{dz:.2f} ohm" + (" - larger than expected: check the model warnings and the convergence" if bad else "")
+              + ".", file=sys.stderr if bad else sys.stdout)
     print("\nBEST CONFIGURATION OF THE SCAN" + (" (ranked by the 10th percentile score)" if mc_done else "")
           + ("" if zin_window_met else " (OUTSIDE THE Zin WINDOW, see the warning above)"))
     for k, v in best.items():
@@ -5900,15 +7308,16 @@ def run_optimize(p, args, network_given):
     print(f"Estimated front length: {(139.0/freq)*best['front_length_factor']*1000:.1f} mm")
     print(f"Estimated spacing: {best['spacing_lambda']*C_LIGHT/(freq*1e6)*1000:.1f} mm")
     if tmatch:
-        print(f"T-match on both driven elements: taps {best['tap_mm']:g} mm from each element center, bars "
-              f"{args.tap_offset_mm:g} mm from the element toward the other one, "
+        print(f"T-match on both driven elements: taps {best['tap_rear_mm']:g} mm (rear) and {best['tap_front_mm']:g} mm "
+              f"(front) from each element center, bars {best['bar_rear_mm']:g} mm (rear) and {best['bar_front_mm']:g} mm "
+              "(front) from the element toward the other one, "
               f"{args.tap_wire_mm or best['element_diameter_mm']:g} mm wire; the "
               "phase line and the feed connect at the bar centers.")
     if best.get("series_c_pf") not in ("", None):
         print(f"Series feed capacitor: {best['series_c_pf']:.2f} pF between the feed line and the fed port"
               + (" (chosen to cancel X_in at the design frequency)" if auto_c else "") + ".")
     if args.network == "tl" and best["line_length_m"] != "":
-        dist_mm = feed_distance_m(args, best_sp_m) * 1000.0
+        dist_mm = feed_dist(best_ev["cand"]["spacing"], bars_of(best_ev["cand"])) * 1000.0
         phys_mm = best["line_length_m"] * 1000.0
         print(f"Phase line: {phys_mm:.1f} mm for {dist_mm:.1f} mm between the feed points (slack {phys_mm - dist_mm:.1f} "
               f"mm for the connections and the crossing; --line-allowance-mm {args.line_allowance_mm:g}).")
@@ -5932,7 +7341,9 @@ def run_optimize(p, args, network_given):
     print(f"F/B metrics: sector = gain(phi=0) minus the maximum of the rear sector {rear_start:g}..{rear_end:g} "
           "degrees on "
           f"the ring; cone = the same against every direction within {rear_cone_half_angle(rear_start, rear_end):g} "
-          f"degrees of the back direction, at any elevation. The score uses: {args.fb_metric}.")
+          f"degrees of the back direction, at any elevation; rear-avg = gain(phi=0) minus the power average of that cone "
+          f"({best['front_to_back_rear_avg_dB']:.2f} dB). The score uses: {args.fb_metric}"
+          + (f", with a {args.fb_cap:g} dB ceiling" if args.fb_cap else "") + ".")
     if best["objective_term"] != "":
         if args.match_score:
             print(f"Score {best['score']:.2f} = objective term {best['objective_term']:.2f} ({args.objective}, after "
@@ -5954,15 +7365,80 @@ def run_optimize(p, args, network_given):
             print(f"NOTE: the best Zin ({best['Zin_real']:.1f}{best['Zin_imag']:+.1f}j ohm) sits on the edge of the "
                   f"admissible window (R {r_min:g}..{r_max:g}, |X| <= {args.zin_x_max:g}): the optimum may lie "
                   "outside; widen --zin-r-range / --zin-x-max to check.")
+    # Limits the best model sits on: the optimum may lie beyond them.
+    limits = []
+    bc = best_ev["cand"]
+    for ax in axes:
+        v, span = get_val(bc, ax["key"]), ax["hi"] - ax["lo"]
+        name = (f"{ax['key'][1]}{ax['key'][2] + 1}" if isinstance(ax["key"], tuple) else ax["key"])
+        if span > 0 and v <= ax["lo"] + 0.01 * span:
+            limits.append(f"{name} at its lower limit {ax['lo']:g}")
+        elif span > 0 and v >= ax["hi"] - 0.01 * span:
+            limits.append(f"{name} at its upper limit {ax['hi']:g}")
+    if single and bc.get("line_elec") is not None:
+        w_lo, w_hi = line_window(bc["spacing"], bars_of(bc))
+        if args.network == "tl" and bc["line_elec"] <= w_lo + 0.5:
+            limits.append(f"phase line at its shortest buildable length ({w_lo:.1f} deg: the straight run plus "
+                          "--line-allowance-mm)")
+        elif bc["line_elec"] >= w_hi - 0.5:
+            limits.append(f"phase line at its longest allowed length ({w_hi:.1f} deg; see --max-line-deg)")
+    if z0_bounds and bc.get("z0") is not None:
+        if bc["z0"] <= z0_bounds[0] * 1.01:
+            limits.append(f"line Z0 at the lower limit of --line-z0-range ({z0_bounds[0]:g} ohm)")
+        elif bc["z0"] >= z0_bounds[1] * 0.99:
+            limits.append(f"line Z0 at the upper limit of --line-z0-range ({z0_bounds[1]:g} ohm)")
+    if limits:
+        print("NOTE: the best model sits on search limits (the optimum may lie beyond them): " + "; ".join(limits) + ".")
+    if best.get("null_line"):
+        print(f"Exact rear null of the best geometry (probe fields): line {best['null_line']}"
+              + ("" if z0_bounds else " (--line-z0-range lets the search use it)") + ".")
+    if args.pareto and single:
+        try:
+            with tempfile.TemporaryDirectory(prefix="hb9cv_pareto_") as td_p:
+                g_b = final_gargs(bc)
+                resps = two_port_response(exe, g_b, td_p, freqs)
+            w_lo, w_hi = line_window(bc["spacing"], bars_of(bc))
+            z_b = bc["z0"] if (args.network == "tl" and bc.get("z0")) else (args.lc_z0 if args.network == "lc"
+                                                                            else abs(args.coax_z0))
+            table_p = tradeoff_table(resps, g_b, score_spec, design_i, w_lo, w_hi, z_b, args.pareto)
+        except (ValueError, OSError) as exc:
+            table_p = []
+            print(f"WARNING: trade-off table failed: {exc}", file=sys.stderr)
+        if table_p:
+            print(f"\nGAIN / F/B TRADE-OFF of the best geometry (phase line {w_lo:.1f}..{w_hi:.1f} deg, worst band "
+                  f"values, F/B {args.fb_metric}):")
+            print(f"{'F/B floor':>10s}{'line deg':>10s}{'gain dBi':>10s}{'F/B dB':>8s}{'Zin (ohm)':>22s}")
+            for fl_, t_, g_, f_, z_ in table_p:
+                print(f"{fl_:10.2f}{t_:10.2f}{g_:10.2f}{f_:8.2f}{z_.real:12.2f}{z_.imag:+9.2f}j")
+            p_csv = csv_path.with_name(csv_path.stem + "_pareto.csv")
+            with p_csv.open("w", newline="", encoding="utf-8") as f_:
+                wr = csv.writer(f_)
+                wr.writerow(["fb_floor_dB", "line_electrical_deg", "worst_gain_dBi", "worst_fb_dB", "Zin_real",
+                             "Zin_imag"])
+                for fl_, t_, g_, f_v, z_ in table_p:
+                    wr.writerow([fl_, t_, g_, f_v, z_.real, z_.imag])
+            print(f"Trade-off CSV: {p_csv}")
+    if sensitivity:
+        print(f"\nTOLERANCE SENSITIVITY of the best design (one dimension at a time, both directions; phase line, series "
+              f"capacitor and matching network as built; score {sensitivity['score']:.2f}, worst-band F/B "
+              f"({args.fb_metric}) {sensitivity['fb']:.2f} dB):")
+        print(f"{'dimension':<24s}{'tolerance':>12s}{'score drop':>12s}{'F/B drop':>10s}{'gain drop':>11s}{'|dZin|':>9s}")
+        for r in sensitivity["rows"]:
+            print(f"{r['dimension']:<24s}{r['tolerance']:>12s}{r['score_drop']:12.2f}{r['fb_drop']:10.2f}"
+                  f"{r['gain_drop']:11.3f}{r['zin_shift']:9.2f}")
+        print(f"Score drop: {sensitivity['score_drop_sum']:.2f} dB worst case (linear sum), "
+              f"{sensitivity['score_drop_rss']:.2f} dB RSS; F/B drop: {sensitivity['fb_drop_sum']:.2f} dB worst case, "
+              f"{sensitivity['fb_drop_rss']:.2f} dB RSS. The dimensions at the top of the table need the most care.")
     if args.band_freqs:
-        print("\nBAND RESULTS of the best model (the worst frequency drives the score):")
+        print("\nBAND RESULTS of the best model (the smooth worst case over the band drives the score):")
         print(f"{'f (MHz)':>9s}{'gain dBi':>10s}{'gain dBd':>10s}{'F/B':>8s}{'F/B sect':>10s}{'F/B cone':>10s}"
-              f"{'takeoff':>9s}{'HPBW':>7s}" + (f"{'VSWR':>8s}{'Zin (ohm)':>20s}" if single else "")
+              f"{'F/B ravg':>10s}{'takeoff':>9s}{'HPBW':>7s}" + (f"{'VSWR':>8s}{'Zin (ohm)':>20s}" if single else "")
               + (f"{'matched':>9s}" if single and args.match_score else ""))
         for x in best_pf:
             dbd = f"{x['gain_dbd']:10.2f}" if x["gain_dbd"] is not None else f"{'-':>10s}"
             line = (f"{x['freq_mhz']:9.3f}{x['forward_gain']:10.2f}{dbd}{x['fb']:8.2f}"
-                    f"{x['robust_fb']:10.2f}{x['cone_fb']:10.2f}{x['takeoff_deg']:9.1f}{x['hpbw']:7.1f}")
+                    f"{x['robust_fb']:10.2f}{x['cone_fb']:10.2f}{x['rear_avg_fb']:10.2f}{x['takeoff_deg']:9.1f}"
+                    f"{x['hpbw']:7.1f}")
             if single:
                 line += f"{x['vswr']:8.2f}{x['zin'].real:11.2f}{x['zin'].imag:+9.2f}j"
                 if args.match_score:
@@ -5992,6 +7468,9 @@ def run_optimize(p, args, network_given):
         if args.line_type == "openwire":
             print(f"Open-wire geometry: wire d={args.line_wire_diameter:g} mm, center spacing "
                   f"D={best['line_spacing_mm']:.2f} mm.")
+            w_ratio = openwire_ratio_warning(args.line_wire_diameter, best["line_spacing_mm"])
+            if w_ratio:
+                print(f"WARNING: phase line Z0 {best['line_z0_ohm']:.0f} ohm: {w_ratio}.", file=sys.stderr)
         else:
             print("WARNING: a coax phasing section needs a balun/choke at its element end; the NEC TL does not "
                   "model shield/common-mode currents.")
@@ -6056,14 +7535,18 @@ def run_optimize(p, args, network_given):
     robust = robustness_check(exe, final_gargs(best_ev["cand"]), rear_start, rear_end) if args.robustness else None
     if args.build_sheet and single:
         zbest = (complex(best["Zin_real"], best["Zin_imag"]) if best["Zin_real"] != "" else None)
-        write_build_sheet(args.build_sheet, args,
+        bs_args = _variant(args, **({"tap_mm_rear": best["tap_rear_mm"], "tap_mm_front": best["tap_front_mm"],
+                                     "tap_offset_mm_rear": best["bar_rear_mm"],
+                                     "tap_offset_mm_front": best["bar_front_mm"]} if tmatch else {}))
+        write_build_sheet(args.build_sheet, bs_args,
                           {"rear_mm": (150.0 / freq) * best["rear_length_factor"] * 1000,
                            "front_mm": (139.0 / freq) * best["front_length_factor"] * 1000,
                            "spacing_mm": best["spacing_lambda"] * C_LIGHT / (freq * 1e6) * 1000,
                            "diam_mm": best["element_diameter_mm"],
                            "parasitics": best_layout, "boom_length_mm": li_best.get("boom_length_mm", args.boom_length),
                            "boom_xc_m": li_best.get("boom_xc_m", 0.0),
-                           "tap_mm": best["tap_mm"] if best["tap_mm"] != "" else args.tap_mm,
+                           "tap_rear_mm": best["tap_rear_mm"] if best["tap_rear_mm"] != "" else args.tap_mm,
+                           "tap_front_mm": best["tap_front_mm"] if best["tap_front_mm"] != "" else args.tap_mm,
                            "series_c_pf": best["series_c_pf"],
                            "match_net": best_pf[design_i].get("m_net"),
                            "extra_warnings": [window_note] if window_note else []},
@@ -6073,7 +7556,9 @@ def run_optimize(p, args, network_given):
                                         best["lc_l_nh"] if best["lc_l_nh"] != "" else None,
                                         best["lc_c_pf"] if best["lc_c_pf"] != "" else None), zbest,
                           {"design": best_pf[design_i], "band": list(best_pf) if args.band_freqs else [best_pf[design_i]],
+                           "sensitivity": sensitivity,
                            "mc": ({"samples": best.get("mc_samples"), "score_p10": best["score_p10"],
+                                   "fb_metric": args.fb_metric,
                                    "fb_p10": best["fb_p10"], "vswr_p90": best.get("vswr_p90"),
                                    "tolerances": mc_tolerances}
                                   if isinstance(best.get("score_p10"), float) else None),
@@ -6101,7 +7586,7 @@ def run_optimize(p, args, network_given):
                           "best": best, "design": best_pf[design_i], "band": best_pf if args.band_freqs else None,
                           "ports": li_best.get("ports"), "conductor_loss": loss_bs, "average_gain_test": agt_bs,
                           "convergence": conv,
-                          "robustness": robust,
+                          "robustness": robust, "sensitivity": sensitivity,
                           "warnings": li_best.get("wire_warnings", []) + li_best.get("line_warnings", [])})
 
 
@@ -6631,10 +8116,22 @@ def build_parser():
              "at the element centers (split, insulated elements); used by default with stepped sections or "
              "--model-feed-gap")
     opt((G, O), "--tap-mm", type=positive_float, default=DEFAULT_TAP_MM, metavar="MM",
-        help="--feed-style tmatch: distance in mm from the element center to each tap (optimize moves it)")
+        help="--feed-style tmatch: distance in mm from the element center to each tap, on both driven elements "
+             "(generate: the default of --tap-rear-mm / --tap-front-mm; optimize: the starting value of both taps, "
+             "which the search moves separately unless --tap-symmetric)")
+    opt((G,), "--tap-rear-mm", dest="tap_mm_rear", type=positive_float, default=None, metavar="MM",
+        help="--feed-style tmatch: tap distance in mm on the rear element (default --tap-mm)")
+    opt((G,), "--tap-front-mm", dest="tap_mm_front", type=positive_float, default=None, metavar="MM",
+        help="--feed-style tmatch: tap distance in mm on the front element (default --tap-mm)")
     opt((G, O), "--tap-offset-mm", type=positive_float, default=DEFAULT_TAP_OFFSET_MM, metavar="MM",
-        help="--feed-style tmatch: distance in mm from the element axis to the T-bar, toward the other element "
-             "(NEC-2 gets less accurate as the bar comes closer than ~5 element diameters: see the average gain test)")
+        help="--feed-style tmatch: distance in mm from the element axis to the T-bar, toward the other element, on both "
+             "driven elements (NEC-2 gets less accurate as the bar comes closer than ~5 element diameters: see the "
+             "average gain test). optimize: the starting value of both bars, which the search moves separately unless "
+             "--tap-symmetric or --no-search-bars")
+    opt((G,), "--tap-offset-rear-mm", dest="tap_offset_mm_rear", type=positive_float, default=None, metavar="MM",
+        help="--feed-style tmatch: T-bar offset in mm of the rear element (default --tap-offset-mm)")
+    opt((G,), "--tap-offset-front-mm", dest="tap_offset_mm_front", type=positive_float, default=None, metavar="MM",
+        help="--feed-style tmatch: T-bar offset in mm of the front element (default --tap-offset-mm)")
     opt((G, O), "--tap-wire-mm", type=positive_float, default=None, metavar="MM",
         help="--feed-style tmatch: diameter in mm of the T-bar and its stubs (default: the element diameter; "
              "unequal radii at the T junctions lower the NEC-2 accuracy)")
@@ -6812,12 +8309,13 @@ def build_parser():
     opt((O,), "--realized-gain", action=argparse.BooleanOptionalAction, default=None,
         help="in the gain objectives use realized gain (discounts mismatch loss; tl/lc only). Default on with "
              "--network tl/lc; --no-realized-gain for the plain gain")
-    opt((O,), "--band", default=None, metavar="FMIN,FMAX,N",
+    opt((O,), "--band", default=None, metavar="FMIN,FMAX,N|none",
         help="score every candidate at N evenly spaced frequencies (e.g. 144,146,5) with one deck per candidate "
-             "and keep the WORST case: min over f of the objective term, minus --vswr-weight*(max VSWR - 1). "
-             "--freq (default: band center) fixes the geometry and the line length; it must lie inside the band and is "
-             "always one of the scored frequencies (added when it is not a band point). Without --band: single "
-             "frequency")
+             "and keep the worst case: the smooth minimum (--band-softness) over f of the objective term, minus "
+             "--vswr-weight*(max VSWR - 1). --freq (default: band center) fixes the geometry and the line length; it "
+             f"must lie inside the band and is always one of the scored frequencies (added when it is not a band "
+             f"point). Default: 3 points over --freq +-{100 * AUTO_BAND_FRACTION:g} %%, so that the score does not "
+             "reward a null at a single frequency; none = --freq alone")
     opt((O,), "--tolerance-mc", type=int, default=0, metavar="N",
         help="after the grid/refine, simulate the same N random perturbations (common random numbers) on each of "
              "the top --tol-top-k candidates and rank them by the 10th percentile score, with a bootstrap interval; "
@@ -6864,21 +8362,90 @@ def build_parser():
     opt((O,), "--rear-sector", default="150,210",
         help="rear sector in degrees, start,end; F/B is maximized against the worst point of the sector")
     opt((O,), "--refine", type=int, default=None, metavar="ROUNDS",
-        help="after the grid, rounds of local search around the best point (every round simulates all moves in "
-             "parallel and keeps the best improvement; the step is halved when none improves) over element lengths, "
-             "phase/line, spacing, element diameter and the reflector/director lengths and spacings; 0 = grid only. "
-             "Default 6 with --network tl/lc, 8 with reflectors/directors, 0 with --network ideal")
-    opt((O,), "--nm-evals", type=int, default=40, metavar="N",
-        help="after the local search, a Nelder-Mead polish of the continuous parameters (element lengths, spacing, "
-             "line or rear phase, element diameter) with at most N nec2c runs; it follows correlated moves such as "
-             "front length against line length. 0 = off")
-    opt((O,), "--pretune", action=argparse.BooleanOptionalAction, default=True,
+        help=f"maximum rounds of the coordinate pattern search after the grid (default {DEFAULT_REFINE_ROUNDS}); every "
+             "round simulates +-step on every variable in parallel, combines the improving moves of all variables, "
+             "halves the step of a variable that improved in neither direction and stops when every step is below "
+             "its tolerance or --refine-evals is spent. Variables: element lengths, rear phase (ideal) or line "
+             "(without the inner solver), the two T-match taps, spacing, element diameter and every reflector/director "
+             "length and spacing. 0 = no pattern search")
+    opt((O,), "--refine-evals", type=int, default=None, metavar="N",
+        help="nec2c simulations (candidates) of the pattern search per starting point (default 10 per search "
+             "variable)")
+    opt((O,), "--nm-evals", type=int, default=None, metavar="N",
+        help="after the pattern search, a Nelder-Mead search (normalized variables, adaptive coefficients, one "
+             "restart) of every continuous search variable with at most N candidates per starting point (default 15 "
+             "per variable); 0 = off")
+    opt((O,), "--search", choices=["pattern", "cmaes"], default="pattern",
+        help="local search after the grid: pattern (pattern search, then Nelder-Mead) or cmaes (CMA-ES with the "
+             "population simulated in parallel, budget --refine-evals + --nm-evals per starting point)")
+    opt((O,), "--starts", type=int, default=2, metavar="S",
+        help="number of starting points of the local search: the best candidates of distinct basins of the grid "
+             "(no two closer than 8 %% of the search box)")
+    opt((O,), "--lhs", type=int, default=0, metavar="N",
+        help="add N Latin-hypercube candidates over the whole search box to the grid (more distinct starting "
+             "points; 0 = off)")
+    opt((O,), "--pretune", action=argparse.BooleanOptionalAction, default=None,
         help="--network tl/lc: before the grid, tune the front length of the central candidate for X_in ~ 0 at "
-             "--freq (secant search, up to 6 nec2c runs) and center the --front-length-values grid on it")
-    opt((O,), "--fb-metric", choices=["point", "sector", "cone"], default="sector",
+             "--freq (secant search, up to 6 nec2c runs) and center the --front-length-values grid on it. Default: on "
+             "with --no-match-score (direct feed), off with --match-score, where the matching network absorbs X_in and "
+             "the front length is free to shape the pattern")
+    opt((O,), "--fb-metric", choices=["point", "sector", "cone", "rear-avg"], default="cone",
         help="F/B used by the front-back and balance objectives and by the Monte-Carlo: point (phi=180 on the ring), "
-             "sector (worst point of --rear-sector on the ring) or cone (worst direction within the sector "
-             "half-angle of the back direction at any elevation, from a 5 degree rear half-sphere grid)")
+             "sector (worst point of --rear-sector on the ring), cone (worst direction within the sector half-angle "
+             "of the back direction at any elevation, default) or rear-avg (forward gain minus the solid-angle "
+             "weighted power average of that cone, a smooth front-to-rear ratio)")
+    opt((O,), "--fb-cap", type=float, default=DEFAULT_FB_CAP, metavar="DB",
+        help=f"ceiling of the F/B in the score: F/B_eff = -10 log10(10^(-F/B/10) + 10^(-cap/10)) (default "
+             f"{DEFAULT_FB_CAP:g} dB; 0 = no ceiling). The reported F/B is not capped")
+    opt((O,), "--band-softness", type=float, default=DEFAULT_BAND_SOFTNESS, metavar="DB",
+        help=f"smooth minimum over the band frequencies (log-sum-exp with this temperature in dB, default "
+             f"{DEFAULT_BAND_SOFTNESS:g}); 0 = the plain worst case")
+    opt((O,), "--min-fb", type=float, default=None, metavar="DB",
+        help="constraint: worst-band F/B (--fb-metric) of at least DB; each dB short costs "
+             f"{CONSTRAINT_RHO:g} dB of score per dB squared (e.g. --objective gain --min-fb 20)")
+    opt((O,), "--min-gain", type=float, default=None, metavar="DBI",
+        help="constraint: worst-band gain (the gain the objective uses) of at least DBI; same penalty as --min-fb "
+             "(e.g. --objective front-back --min-gain 6.3)")
+    opt((O,), "--q-weight", type=float, default=DEFAULT_Q_WEIGHT, metavar="DB",
+        help=f"--network tl/lc: dB of score per unit of |X_in|/R_in above {Q_FREE:g} at --freq (a very reactive Zin "
+             f"needs a high-Q matching network with a narrow bandwidth; default {DEFAULT_Q_WEIGHT:g}, 0 = off)")
+    opt((O,), "--inner-line", action=argparse.BooleanOptionalAction, default=True,
+        help="--network tl/lc: solve the phase network of every geometry exactly: two probe runs over the scored "
+             "frequencies give the pattern and Zin of the antenna for any line, the line (and, with --line-z0-range, "
+             "its Z0) that maximizes the score is chosen and the candidate's results come from the superposed probe "
+             "fields (exact for the linear model; the final model is simulated in full as a check). The line is then "
+             "not a grid or search variable; --no-inner-line scans --line-offset-values instead")
+    opt((O,), "--line-z0-range", default=None, metavar="MIN,MAX",
+        help="--line-type openwire with the inner solver: Z0 of the phase line chosen per geometry within MIN..MAX "
+             "ohm (the open-wire spacing follows from Z0 and --line-wire-diameter); the probe fields also give the Z0 "
+             "and length of an exact rear null, reported per candidate")
+    opt((O,), "--tap-symmetric", action="store_true",
+        help="--feed-style tmatch: keep the same tap and the same T-bar offset on both driven elements (by default the "
+             "search moves the rear and front taps and bars separately: they set the amplitude relation of the element "
+             "currents)")
+    opt((O,), "--sensitivity", action="store_true",
+        help="after the search: first-order tolerance sensitivity of the best design: every build dimension (element "
+             "lengths, spacing, taps, T-bar offsets, parasitic lengths and spacings, phase line length, VF and Z0, series "
+             "capacitor) moved by its --tol-* tolerance in both directions, one at a time, with the line, capacitor and "
+             "matching network as built; prints the score, F/B, gain and Zin changes, the worst-case and RSS drops, and "
+             "adds them to the JSON and the build sheet (2 simulations per dimension)")
+    opt((O,), "--parasitic-inner", type=int, default=3, metavar="ROUNDS",
+        help="with reflectors/directors and the inner line solver: rounds of the multiport stage after the local "
+             "search: probe runs with a port at every feed point and parasitic center give the antenna for any reactance "
+             "at the parasitic centers, which stands for a change of their lengths (slope from a second probe set); the "
+             "lengths that maximize the score on that model are simulated and kept when they improve the best "
+             "candidate (2 x (2 + parasitics) probe runs and one simulation per round; 0 = off)")
+    opt((O,), "--search-bars", action=argparse.BooleanOptionalAction, default=True,
+        help=f"--feed-style tmatch: the T-bar offsets are search variables, from {BAR_MIN_MM:g} mm (and "
+             f"{BAR_MIN_DIAMETERS:g} element diameters) to {BAR_MAX_MM:g} mm, always leaving room for the phase line "
+             "between the bars; --no-search-bars keeps --tap-offset-mm")
+    opt((O,), "--robust-inner", type=int, default=0, metavar="N",
+        help="inner solver: choose the line by the 10th percentile score over N common random draws of the line "
+             "length (--tol-line-deg), line VF (--tol-vf-pct), Z0 (--tol-z0-pct) and series capacitor (--tol-c-pct); "
+             "these tolerances change only the phase network, so they cost no nec2c runs (0 = nominal line)")
+    opt((O,), "--pareto", type=int, default=0, metavar="N",
+        help="after the search, print the gain / F/B trade-off of the best geometry at N F/B floors (best line per "
+             "floor, from its probe responses) and write it to <csv>_pareto.csv; 0 = off")
     opt((O,), "--csv", default="hb9cv_scan.csv",
         help="CSV file with all scanned candidates; the first lines ('# ...') record the arguments and the nec2c "
              "version (read with comment='#' in pandas, or skip them)")
@@ -6926,7 +8493,7 @@ def build_parser():
 
 
 # Comma-list options whose first value may be negative ("-20,0,20"): argparse treats such a token as an option.
-LIST_OPTS = {"--line-offset-values", "--line-length-values", "--coax-length-values", "--z0-values",
+LIST_OPTS = {"--line-z0-range", "--line-offset-values", "--line-length-values", "--coax-length-values", "--z0-values",
              "--ratio-values", "--phase-offset-values", "--phase-values", "--spacing-values",
              "--rear-length-values", "--front-length-values", "--zin-r-range", "--diameter-range",
              "--rear-sector", "--fsweep", "--band", "--commercial", "--parasitic-length-offsets",
@@ -6999,13 +8566,19 @@ def main(argv=None):
     if args.mode in ("generate", "optimize"):
         network_given = any(a.split("=", 1)[0] == "--network" for a in argv)
         args.band_freqs = None
-        if args.mode == "optimize" and args.band:
+        auto_band = args.mode == "optimize" and args.band is None
+        if args.mode == "optimize" and args.band and args.band.strip().lower() != "none":
             try:
                 args.band_freqs = parse_band(args.band)
             except argparse.ArgumentTypeError as exc:
                 p.error(str(exc))
         if args.freq is None:
             args.freq = 0.5 * (args.band_freqs[0] + args.band_freqs[-1]) if args.band_freqs else 145.0
+        if auto_band:
+            args.band_freqs = [args.freq * (1.0 - AUTO_BAND_FRACTION), args.freq, args.freq * (1.0 + AUTO_BAND_FRACTION)]
+            print(f"NOTE: --band not given: the score uses 3 points {args.band_freqs[0]:.3f}, {args.freq:g}, "
+                  f"{args.band_freqs[-1]:.3f} MHz (--freq +-{100 * AUTO_BAND_FRACTION:g} %); --band none scores "
+                  "--freq alone.")
         if args.mode == "generate":
             run_generate(p, args)
         else:
